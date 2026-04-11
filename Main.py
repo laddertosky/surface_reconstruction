@@ -1,14 +1,13 @@
-import numpy as np
-import open3d as o3d
+import open3d.visualization.gui as gui  # type: ignore
 
-from AlphaShape import AlphaShapeMethod
-from BallPivoting import BallPivotingMethod
-from Possion import PoissonMethod
+from Layout import Window
 
 
 def main():
-    pass
-
+    app = gui.Application.instance
+    app.initialize()
+    Window(app=app, name="Surface Reconstruction", width=1920, height=720)
+    app.run()
 
 if __name__ == "__main__":
     main()
