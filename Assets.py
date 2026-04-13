@@ -36,7 +36,7 @@ class Asset():
 
 # Built-in Ball Pivoting is very slow, it even struggles with beetle.obj
 ALL_ASSETS = [
-    Asset("suzanne", "./assets/suzanne.obj", 64),
+    Asset("suzanne", "./assets/suzanne.obj", 590),
     Asset("beetle", "./assets/beetle.obj", 1254),
     Asset("cow", "./assets/cow.obj", 2903),
     Asset("teapot", "./assets/teapot.obj", 3241),
