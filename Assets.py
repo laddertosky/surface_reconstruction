@@ -1,3 +1,4 @@
+import numpy as np
 import open3d as o3d
 
 
@@ -8,11 +9,18 @@ class Asset():
         self.mesh = None
         self.pcd = None
         self.vertices_count = vertices_count
+        self.init_radius = -1
 
     def load_pcd(self, vertices_count: int = -1) -> o3d.geometry.PointCloud:
         if self.pcd: return self.pcd
 
         mesh = self._load()
+
+        # center mesh to (0, 0, 0)
+        self.aabb = mesh.get_axis_aligned_bounding_box()
+        center = self.aabb.get_center()
+        mesh.translate(-center)
+        self.aabb.translate(-center)
 
         self.pcd = o3d.geometry.PointCloud()
         if vertices_count > 0 and vertices_count < self.vertices_count:
@@ -20,16 +28,21 @@ class Asset():
             self.pcd = mesh.sample_points_poisson_disk(vertices_count)
         else:
             self.pcd.points = mesh.vertices
-
-        if mesh.has_vertex_colors():
-            self.pcd.colors = mesh.vertex_colors
+            # self.pcd.normals = mesh.vertex_normals # directly using the mesh normals is cheated
 
         self.pcd.estimate_normals()
+
+        # Lower k means smaller propagation steps, less likely to jump across gaps, default is 100
+        self.pcd.orient_normals_consistent_tangent_plane(k=6)
+
+        # initial value for ball pivoting method
+        distances = self.pcd.compute_nearest_neighbor_distance()
+        avg_distances = np.mean(distances)
+        self.init_radius = avg_distances * 3
+
         return self.pcd
 
     def _load(self) -> o3d.geometry.TriangleMesh:
-        if self.mesh: return self.mesh
-
         self.mesh = o3d.io.read_triangle_mesh(self.path)
         self.vertices_count = len(self.mesh.vertices)
         return self.mesh
@@ -46,6 +59,6 @@ ALL_ASSETS = [
     Asset("dragon", "./assets/xyzrgb_dragon.obj", 124943),
 ]
 
-for asset in ALL_ASSETS:
-    asset.load_pcd()
-    print(f"{asset.name}: {asset.vertices_count}")
+# for asset in ALL_ASSETS:
+#     asset.load_pcd()
+#     print(f"{asset.name}: {asset.vertices_count}")
