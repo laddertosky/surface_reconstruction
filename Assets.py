@@ -9,6 +9,7 @@ class Asset():
         self.mesh = None
         self.pcd = None
         self.vertices_count = vertices_count
+        self.init_alpha = -1
         self.init_radius = -1
 
     def load_pcd(self, vertices_count: int = -1) -> o3d.geometry.PointCloud:
@@ -33,12 +34,14 @@ class Asset():
         self.pcd.estimate_normals()
 
         # Lower k means smaller propagation steps, less likely to jump across gaps, default is 100
+        # The most important steps to make Poisson better looking
         self.pcd.orient_normals_consistent_tangent_plane(k=6)
 
         # initial value for ball pivoting method
         distances = self.pcd.compute_nearest_neighbor_distance()
         avg_distances = np.mean(distances)
-        self.init_radius = avg_distances * 3
+        self.init_alpha = avg_distances * 10.0
+        self.init_radius = avg_distances * 1.5
 
         return self.pcd
 
@@ -53,7 +56,7 @@ ALL_ASSETS = [
     Asset("beetle", "./assets/beetle.obj", 1254),
     Asset("cow", "./assets/cow.obj", 2903),
     Asset("teapot", "./assets/teapot.obj", 3241),
-    Asset("rocket-arm", "./assets/rocker-arm.obj", 10044),
+    Asset("rocker-arm", "./assets/rocker-arm.obj", 10044),
     Asset("stanford-bunny", o3d.data.BunnyMesh().path, 35947),
     Asset("lucy", "./assets/lucy.obj", 49987),
     Asset("dragon", "./assets/xyzrgb_dragon.obj", 124943),

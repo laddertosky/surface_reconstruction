@@ -159,7 +159,7 @@ class Window:
         self._radius = ALL_ASSETS[self._asset_index].init_radius
         self._poisson_depth = 8
 
-        self._alpha = 0.4
+        self._alpha = ALL_ASSETS[self._asset_index].init_alpha
         self._alpha_debounce_delay = 0.1
         self._alpha_debounce_timer = None
         self._radii_debounce_delay = 0.3
@@ -297,25 +297,28 @@ class Window:
         top_bar.add_child(all_btn)
 
         possion_panel = Panel("Possion", self._window, 1)
-        poisson_depth_slider = gui.Slider(gui.Slider.Type.INT)
-        poisson_depth_slider.int_value = self._poisson_depth
-        poisson_depth_slider.set_limits(2, 12)
-        poisson_depth_slider.set_on_value_changed(self._on_depth_changed)
-        possion_panel.control_panel.add_child(poisson_depth_slider)
+        self._poisson_depth_slider = gui.Slider(gui.Slider.Type.INT)
+        self._poisson_depth_slider.int_value = self._poisson_depth
+        self._poisson_depth_slider.set_limits(2, 12)
+        self._poisson_depth_slider.set_on_value_changed(self._on_depth_changed)
+        possion_panel.control_panel.add_child(gui.Label("depth"))
+        possion_panel.control_panel.add_child(self._poisson_depth_slider)
 
         alpha_shape_panel = Panel("Alpha Shape", self._window, 2)
-        alpha_slider = gui.Slider(gui.Slider.Type.DOUBLE)
-        alpha_slider.double_value = np.log10(self._alpha)
-        alpha_slider.set_limits(-3, 3)
-        alpha_slider.set_on_value_changed(self._on_alpha_changed)
-        alpha_shape_panel.control_panel.add_child(alpha_slider)
+        self._alpha_slider = gui.Slider(gui.Slider.Type.DOUBLE)
+        self._alpha_slider.double_value = np.log10(self._alpha)
+        self._alpha_slider.set_limits(-3, 3)
+        self._alpha_slider.set_on_value_changed(self._on_alpha_changed)
+        alpha_shape_panel.control_panel.add_child(gui.Label("log10(alpha)"))
+        alpha_shape_panel.control_panel.add_child(self._alpha_slider)
         
         ball_pivoting_panel = Panel("Ball Pivoting", self._window, 3)
-        ball_radii_slider = gui.Slider(gui.Slider.Type.DOUBLE)
-        ball_radii_slider.double_value = self._radius
-        ball_radii_slider.set_limits(0.001, 2)
-        ball_radii_slider.set_on_value_changed(self._on_radius_changed)
-        ball_pivoting_panel.control_panel.add_child(ball_radii_slider)
+        self._ball_radii_slider = gui.Slider(gui.Slider.Type.DOUBLE)
+        self._ball_radii_slider.double_value = self._radius
+        self._ball_radii_slider.set_limits(0.001, 2)
+        self._ball_radii_slider.set_on_value_changed(self._on_radius_changed)
+        ball_pivoting_panel.control_panel.add_child(gui.Label("radius"))
+        ball_pivoting_panel.control_panel.add_child(self._ball_radii_slider)
 
         reference_panel = Panel("Reference", self._window, 4)
         self._panels = {
@@ -369,6 +372,10 @@ class Window:
         self._asset_index = index
         self._pcd = ALL_ASSETS[self._asset_index].load_pcd()
         self._radius = ALL_ASSETS[self._asset_index].init_radius
+        self._ball_radii_slider.double_value = self._radius
+
+        self._alpha = ALL_ASSETS[self._asset_index].init_alpha
+        self._alpha_slider.double_value = np.log10(self._alpha)
 
         for mode, panel in self._panels.items():
             if self._layout_mode == LayoutMode.All:
