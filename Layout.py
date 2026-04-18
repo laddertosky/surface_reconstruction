@@ -68,25 +68,24 @@ class Panel:
         self._center = [0, 0, 0]
         self._extent = 2.5
 
-        self.rendered = None
+        self._material = rendering.MaterialRecord()
+        self._material.base_reflectance = 0.7
+        self._material.shader = "defaultLit"
+
+        self.rendered = -1
         self.last_camera_state = CameraState(np.zeros(3), np.array([0, 0, 1]), np.array([0, 1, 0]))
 
     # should run in the UI thread, so don't put any heavy computing task here
     def add_mesh(self, mesh: o3d.geometry.TriangleMesh, aabb: o3d.geometry.AxisAlignedBoundingBox) -> None:
         self.scene_widget.scene.clear_geometry()
-        self.aabb = aabb 
         self._center = aabb.get_center()
         self._extent = aabb.get_max_extent()
 
         if mesh.has_vertex_colors:
             mesh.vertex_colors = o3d.utility.Vector3dVector([])
 
-        material = rendering.MaterialRecord()
-        material.base_reflectance = 0.7
-        material.shader = "defaultLit"
-
-        self.scene_widget.scene.add_geometry(f"{self._name}_aabb", aabb, material)
-        self.scene_widget.scene.add_geometry(f"{self._name}_mesh", mesh, material)
+        self.scene_widget.scene.add_geometry(f"{self._name}_aabb", aabb, self._material)
+        self.scene_widget.scene.add_geometry(f"{self._name}_mesh", mesh, self._material)
         print(f"{self._name}, triangles: {len(mesh.triangles)}")
 
     def reset_camera(self) -> None:
@@ -155,7 +154,8 @@ class Window:
         self._camera_synced = True
 
         self._asset_index = 0
-        self._pcd = ALL_ASSETS[self._asset_index].load_pcd()
+        self._vertex_count = -1
+        self._pcd = ALL_ASSETS[self._asset_index].load_pcd(self._vertex_count)
         self._radius = ALL_ASSETS[self._asset_index].init_radius
         self._poisson_depth = 8
 
@@ -175,9 +175,8 @@ class Window:
 
         self._make_meshes(require_reset_camera=True)
 
-    # TODO: UI thread is somehow blocked with slow mesh processing
-    def _make_mesh_async(self, mode, fn, require_reset_camera: bool):
-        if self._panels[mode].rendered == mode:
+    def _make_mesh_async(self, mode, asset_index, fn, require_reset_camera: bool):
+        if self._panels[mode].rendered == asset_index:
             return
 
         print(f"Preparing new mesh for {mode}")
@@ -186,7 +185,8 @@ class Window:
         mesh.orient_triangles()
 
         aabb = ALL_ASSETS[self._asset_index].aabb
-        self._panels[mode].rendered = mode
+        self._panels[mode].rendered = asset_index
+
         def _update():
             self._panels[mode].add_mesh(mesh, aabb)
             self._window.post_redraw()
@@ -198,27 +198,32 @@ class Window:
         return ALL_ASSETS[self._asset_index].mesh
 
     def _make_possion_mesh(self) -> o3d.geometry.TriangleMesh:
+        print(f"Poisson with depth = {self._poisson_depth}")
+
         mesh = PoissonMethod(
             pcd=self._pcd, 
             depth=self._poisson_depth,
-            # scale=1.1,
-            # linear_fit=True,
         )
 
+        # sometimes artifact will be too large, cropping to prevent it covering the window
         aabb = ALL_ASSETS[self._asset_index].aabb
         mesh = mesh.crop(aabb)
         return mesh
 
     def _make_alpha_shape_mesh(self) -> o3d.geometry.TriangleMesh:
+        print(f"Alpha Shape with alpha = {self._alpha:>.3f}")
         return AlphaShapeMethod(
             pcd=self._pcd, 
             alpha=self._alpha,
         )
 
     def _make_ball_pivoting_mesh(self) -> o3d.geometry.TriangleMesh:
+        radii = o3d.utility.DoubleVector([self._radius, self._radius * 2, self._radius * 4])
+        print(f"Ball Pivoting with radius = {radii}")
+
         return BallPivotingMethod(
             pcd=self._pcd, 
-            radii=o3d.utility.DoubleVector([self._radius, self._radius * 2, self._radius * 4])
+            radii=radii
         )
 
     def _make_meshes(self, require_reset_camera: bool) -> None:
@@ -231,16 +236,16 @@ class Window:
 
         if self._layout_mode == LayoutMode.All:
             for mode, fn in tasks.items():
-                t = threading.Thread(target=self._make_mesh_async, args=(mode, fn, require_reset_camera), daemon=True)
+                t = threading.Thread(target=self._make_mesh_async, args=(mode, self._asset_index, fn, require_reset_camera), daemon=True)
                 t.start()
         else:
-            t1 = threading.Thread(target=self._make_mesh_async, args=(self._layout_mode, tasks[self._layout_mode], require_reset_camera), daemon=True)
+            t1 = threading.Thread(target=self._make_mesh_async, args=(self._layout_mode, self._asset_index, tasks[self._layout_mode], require_reset_camera), daemon=True)
             t1.start()
-            t2 = threading.Thread(target=self._make_mesh_async, args=(LayoutMode.Reference, tasks[LayoutMode.Reference], require_reset_camera), daemon=True)
+            t2 = threading.Thread(target=self._make_mesh_async, args=(LayoutMode.Reference, self._asset_index, tasks[LayoutMode.Reference], require_reset_camera), daemon=True)
             t2.start()
 
     def _apply_alpha_change(self) -> None:
-        self._panels[LayoutMode.AlphaShapeFocused].rendered = None
+        self._panels[LayoutMode.AlphaShapeFocused].rendered = -1
         self._make_meshes(require_reset_camera=False)
 
     def _on_alpha_changed(self, log_alpha: float) -> None:
@@ -255,7 +260,7 @@ class Window:
         self._alpha_debounce_timer.start()
 
     def _apply_depth_change(self):
-        self._panels[LayoutMode.PossionFocused].rendered = None
+        self._panels[LayoutMode.PossionFocused].rendered = -1
         self._make_meshes(require_reset_camera=False)
 
     # it always sends float value even if it is attached to an integer slider
@@ -271,7 +276,7 @@ class Window:
         self._depth_debounce_timer.start()
 
     def _apply_radius_change(self) -> None:
-        self._panels[LayoutMode.BallPivotFocused].rendered = None
+        self._panels[LayoutMode.BallPivotFocused].rendered = -1
         self._make_meshes(require_reset_camera=False)
 
     def _on_radius_changed(self, radius: float) -> None:
@@ -315,7 +320,7 @@ class Window:
         ball_pivoting_panel = Panel("Ball Pivoting", self._window, 3)
         self._ball_radii_slider = gui.Slider(gui.Slider.Type.DOUBLE)
         self._ball_radii_slider.double_value = self._radius
-        self._ball_radii_slider.set_limits(0.001, 2)
+        self._ball_radii_slider.set_limits(0.0001, 2)
         self._ball_radii_slider.set_on_value_changed(self._on_radius_changed)
         ball_pivoting_panel.control_panel.add_child(gui.Label("radius"))
         ball_pivoting_panel.control_panel.add_child(self._ball_radii_slider)
@@ -370,7 +375,7 @@ class Window:
             return
 
         self._asset_index = index
-        self._pcd = ALL_ASSETS[self._asset_index].load_pcd()
+        self._pcd = ALL_ASSETS[self._asset_index].load_pcd(self._vertex_count)
         self._radius = ALL_ASSETS[self._asset_index].init_radius
         self._ball_radii_slider.double_value = self._radius
 
@@ -379,12 +384,12 @@ class Window:
 
         for mode, panel in self._panels.items():
             if self._layout_mode == LayoutMode.All:
-                panel.rendered = None
+                panel.rendered = -1
             elif mode == LayoutMode.Reference:
-                panel.rendered = None
+                panel.rendered = -1
             # defer rendering other panels if focus on a specific panel
             elif mode == self._layout_mode:
-                panel.rendered = None
+                panel.rendered = -1
 
         self._make_meshes(require_reset_camera=True)
 
@@ -417,7 +422,7 @@ class Window:
     def _set_focus(self, mode: LayoutMode) -> None:
         self._layout_mode = mode
         if mode != LayoutMode.All and self._panels[mode].rendered != self._panels[LayoutMode.Reference].rendered:
-            self._panels[mode].rendered = None
+            self._panels[mode].rendered = -1
 
         self._make_meshes(require_reset_camera=False)
         self._window.set_needs_layout()
