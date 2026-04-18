@@ -14,7 +14,7 @@ from Fake import AlphaShapeMethod, BallPivotingMethod, PoissonMethod
 
 # from AlphaShape import AlphaShapeMethod
 # from BallPivoting import BallPivotingMethod
-# from Possion import PoissonMethod
+# from Poisson import PoissonMethod
 
 TOP_BAR_HEIGHT = 40
 CTRL_HEIGHT    = 40
