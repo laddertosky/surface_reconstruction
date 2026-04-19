@@ -10,10 +10,10 @@ import open3d.visualization.rendering as rendering  # type: ignore # Open3d does
 
 from Assets import ALL_ASSETS
 # TODO: replace the implementations after other team member finish their work
-from Fake import AlphaShapeMethod, BallPivotingMethod, PoissonMethod
+from Fake import AlphaShapeMethod, PoissonMethod
+from BallPivoting import BallPivotingMethod
 
 # from AlphaShape import AlphaShapeMethod
-# from BallPivoting import BallPivotingMethod
 # from Poisson import PoissonMethod
 
 TOP_BAR_HEIGHT = 40
@@ -154,7 +154,7 @@ class Window:
         self._camera_synced = True
 
         self._asset_index = 0
-        self._vertex_count = -1
+        self._vertex_count = 3000
         self._pcd = ALL_ASSETS[self._asset_index].load_pcd(self._vertex_count)
         self._radius = ALL_ASSETS[self._asset_index].init_radius
         self._poisson_depth = 8

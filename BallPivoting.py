@@ -6,19 +6,19 @@ Based on:
     Digne (2014), "An Analysis and Implementation of a Parallel Ball Pivoting Algorithm"
         https://www.ipol.im/pub/art/2014/81/article_lr.pdf
 
-Status: This is currently a work in progres implementation
-
 Done:
     Setup & data structures-Edge, KDTree, point state tracking
     _ball_center-computes where a ball of radius rho rests on the 3 points
     _find_seed_triangle-finds an initial triangle to start growing from
     _pivot-rolls the ball around an edge to find the next triangle
+    Front expansion loop (runs until front is empty)
+    Multi-radius passes (iterates over radii, resets front between passes)
 Claude was used to help in debugging my code as well as the template of the code.
-TODO:
-    Full front expansion loop (remove the 10-pivot cap, run until front is empty)
-    Multi-radius passes (iterate over radii, reset boundary points between passes)
+
+Note: seed search is O(N * M^2), so very large clouds (>~20k points) get a size-guard skip.
 """
 
+import time
 from collections import deque
 from dataclasses import dataclass
 
@@ -27,6 +27,9 @@ import open3d as o3d
 from scipy.spatial import KDTree
 
 from Test import BuiltinSurfaceReconstructionMethod, BunnyPCD, ShowComparison
+
+MAX_POINTS = 20000
+TIME_BUDGET_SEC = 30.0  # give up and return partial mesh after this
 
 
 @dataclass
@@ -71,19 +74,16 @@ def _ball_center(pi, pj, pk, rho, normals_ijk):
 
     h = np.sqrt(gap)  # lift height
 
-    avg_normal = normals_ijk.mean(axis=0)
-    avg_normal_len = np.linalg.norm(avg_normal)
-    if avg_normal_len < 1e-12:
-        avg_normal = normal
+    # paper: orient n so each vertex normal has nonneg dot product
+    dots = normals_ijk @ normal
+    if np.all(dots >= 0):
+        pass
+    elif np.all(dots <= 0):
+        normal = -normal
     else:
-        avg_normal = avg_normal / avg_normal_len
+        return None  # vertex normals straddle triangle plane
 
-    if np.dot(normal, avg_normal) >= 0:
-        center = circumcenter + h * normal
-    else:
-        center = circumcenter - h * normal
-
-    return center
+    return circumcenter + h * normal
 
 
 def _find_seed_triangle(points, normals, kdtree, rho, point_state):
@@ -120,18 +120,19 @@ def _find_seed_triangle(points, normals, kdtree, rho, point_state):
                 if inside:
                     continue
 
-                # winding check
+                # per-vertex compatibility (paper sec 2.3): tri normal must dot > 0 with each vertex normal
                 tri_normal = np.cross(pj - pi, pk - pi)
                 tri_normal_len = np.linalg.norm(tri_normal)
                 if tri_normal_len < 1e-12:
                     continue
                 tri_normal = tri_normal / tri_normal_len
 
-                avg_normal = normals_ijk.mean(axis=0)
-                if np.dot(tri_normal, avg_normal) < 0:
-                    return (i, k, j), center
-
-                return (i, j, k), center
+                dots = normals_ijk @ tri_normal
+                if np.all(dots > 0):
+                    return (i, j, k), center
+                if np.all(dots < 0):
+                    return (i, k, j), center  # flipped winding also compatible
+                # else: incompatible, try next k
 
     return None
 
@@ -173,6 +174,17 @@ def _pivot(points, normals, kdtree, rho, edge, point_state):
         if center is None:
             continue
 
+        # per-vertex compatibility: output tri is (j, i, k) with normal = -tri_normal.
+        # need -tri_normal dot > 0 with each vertex normal, i.e. tri_normal dot < 0 with each
+        tri_normal = np.cross(pj - pi, points[k] - pi)
+        tri_normal_len = np.linalg.norm(tri_normal)
+        if tri_normal_len < 1e-12:
+            continue
+        tri_normal = tri_normal / tri_normal_len
+        dots = normals_ijk @ tri_normal
+        if np.any(dots >= 0):
+            continue
+
         # pivot angle
         new_rel = center - midpoint
         new_proj = new_rel - np.dot(new_rel, edge_axis) * edge_axis
@@ -201,15 +213,46 @@ def _pivot(points, normals, kdtree, rho, edge, point_state):
     return None
 
 
-def _bpa_single_radius(points, normals, kdtree, rho, point_state, triangles):
+def _add_triangle(tri, triangles, seen_triangles, used_dir_edges):
+    """Try to add a triangle (a, b, c); returns True if added. Rejects if any directed edge is already used (would violate manifold)."""
+    a, b, c = tri
+    key = tuple(sorted((a, b, c)))
+    if key in seen_triangles:
+        return False
+    dir_edges = [(a, b), (b, c), (c, a)]
+    if any(e in used_dir_edges for e in dir_edges):
+        return False
+    seen_triangles.add(key)
+    used_dir_edges.update(dir_edges)
+    triangles.append(tri)
+    return True
+
+
+def _bpa_single_radius(points, normals, kdtree, rho, point_state, triangles, seen_triangles, used_dir_edges, deadline):
     """Run BPA for one ball radius, modifies state in place."""
+    tri_cap = 10 * len(points)  # safety cap, real meshes are ~2x V
+    stall_limit = 10  # bail if this many seeds produce zero new triangles in a row
+    stall_count = 0
     while True:
+        if time.time() > deadline:
+            print(f"  rho={rho}: time budget reached, bailing")
+            return False
+        if len(triangles) > tri_cap:
+            print(f"  rho={rho}: hit triangle cap ({tri_cap}), bailing")
+            break
+        if stall_count >= stall_limit:
+            break
         seed = _find_seed_triangle(points, normals, kdtree, rho, point_state)
         if seed is None:
             break
 
         (i, j, k), ball_center = seed
-        triangles.append((i, j, k))
+        if not _add_triangle((i, j, k), triangles, seen_triangles, used_dir_edges):
+            # reject overlapping/duplicate seed, mark points and move on
+            point_state[i] = "front"
+            point_state[j] = "front"
+            point_state[k] = "front"
+            continue
         point_state[i] = "front"
         point_state[j] = "front"
         point_state[k] = "front"
@@ -226,6 +269,8 @@ def _bpa_single_radius(points, normals, kdtree, rho, point_state, triangles):
 
         tri_count_start = len(triangles)
         while front:
+            if len(triangles) > tri_cap or time.time() > deadline:
+                break
             edge = front.popleft()
             if (edge.i, edge.j) not in edge_map:
                 continue
@@ -239,7 +284,12 @@ def _bpa_single_radius(points, normals, kdtree, rho, point_state, triangles):
                 continue
 
             new_k, new_center = result
-            triangles.append((edge.j, edge.i, new_k))
+            if not _add_triangle((edge.j, edge.i, new_k), triangles, seen_triangles, used_dir_edges):
+                # overlaps existing mesh; treat edge as boundary
+                del edge_map[(edge.i, edge.j)]
+                front_edge_count[edge.i] -= 1
+                front_edge_count[edge.j] -= 1
+                continue
             del edge_map[(edge.i, edge.j)]
             front_edge_count[edge.i] -= 1
             front_edge_count[edge.j] -= 1
@@ -268,12 +318,20 @@ def _bpa_single_radius(points, normals, kdtree, rho, point_state, triangles):
                 if front_edge_count.get(p, 0) <= 0 and point_state[p] == "front":
                     point_state[p] = "inner"
 
-        print(f"  rho={rho}: component added {len(triangles) - tri_count_start} triangles (total: {len(triangles)})")
+        added = len(triangles) - tri_count_start
+        stall_count = stall_count + 1 if added == 0 else 0
+        print(f"  rho={rho}: component added {added} triangles (total: {len(triangles)})")
+    return True
 
 
 def BallPivotingMethod(pcd: o3d.geometry.PointCloud, radii: o3d.utility.DoubleVector, **kwargs) -> o3d.geometry.TriangleMesh:
     points = np.asarray(pcd.points)
     normals = np.asarray(pcd.normals)
+
+    if len(points) > MAX_POINTS:
+        print(f"BallPivoting: skipping {len(points)} points (> {MAX_POINTS} cap)")
+        return o3d.geometry.TriangleMesh()
+
 
     norms = np.linalg.norm(normals, axis=1, keepdims=True)
     norms[norms == 0] = 1
@@ -282,6 +340,9 @@ def BallPivotingMethod(pcd: o3d.geometry.PointCloud, radii: o3d.utility.DoubleVe
     kdtree = KDTree(points)
     point_state = ["unused"] * len(points)
     triangles = []
+    seen_triangles = set()
+    used_dir_edges = set()
+    deadline = time.time() + TIME_BUDGET_SEC
 
     for rho in radii:
         # reset front points for next radius pass
@@ -289,7 +350,9 @@ def BallPivotingMethod(pcd: o3d.geometry.PointCloud, radii: o3d.utility.DoubleVe
             if point_state[idx] == "front":
                 point_state[idx] = "unused"
 
-        _bpa_single_radius(points, normals, kdtree, float(rho), point_state, triangles)
+        finished = _bpa_single_radius(points, normals, kdtree, float(rho), point_state, triangles, seen_triangles, used_dir_edges, deadline)
+        if not finished:
+            break
 
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(points)
