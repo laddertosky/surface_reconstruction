@@ -9,9 +9,9 @@ import open3d.visualization.gui as gui  # type: ignore # Open3d doesn't provide 
 import open3d.visualization.rendering as rendering  # type: ignore # Open3d doesn't provide signature for this python binding
 
 from Assets import ALL_ASSETS
+from BallPivoting import BallPivotingMethod
 # TODO: replace the implementations after other team member finish their work
 from Fake import AlphaShapeMethod, PoissonMethod
-from BallPivoting import BallPivotingMethod
 
 # from AlphaShape import AlphaShapeMethod
 # from Poisson import PoissonMethod
@@ -179,13 +179,14 @@ class Window:
         if self._panels[mode].rendered == asset_index:
             return
 
+        self._panels[mode].rendered = asset_index
+
         print(f"Preparing new mesh for {mode}")
         mesh = fn()
         mesh.compute_vertex_normals()
         mesh.orient_triangles()
 
         aabb = ALL_ASSETS[self._asset_index].aabb
-        self._panels[mode].rendered = asset_index
 
         def _update():
             self._panels[mode].add_mesh(mesh, aabb)
@@ -249,6 +250,10 @@ class Window:
         self._make_meshes(require_reset_camera=False)
 
     def _on_alpha_changed(self, log_alpha: float) -> None:
+        next_alpha = np.pow(10, log_alpha)
+        if np.isclose(self._alpha, next_alpha):
+            return
+
         if self._alpha_debounce_timer:
             self._alpha_debounce_timer.cancel()
 
@@ -256,7 +261,7 @@ class Window:
             self._alpha_debounce_delay,
             self._apply_alpha_change
         )
-        self._alpha = np.pow(10, log_alpha)
+        self._alpha = next_alpha
         self._alpha_debounce_timer.start()
 
     def _apply_depth_change(self):
@@ -265,6 +270,9 @@ class Window:
 
     # it always sends float value even if it is attached to an integer slider
     def _on_depth_changed(self, depth: float) -> None:
+        if np.isclose(self._poisson_depth, depth):
+            return
+
         if self._depth_debounce_timer:
             self._depth_debounce_timer.cancel()
 
@@ -272,14 +280,17 @@ class Window:
             self._depth_debounce_delay,
             self._apply_depth_change
         )
-        self._poisson_depth = int(depth)
+        self._poisson_depth = round(depth)
         self._depth_debounce_timer.start()
 
     def _apply_radius_change(self) -> None:
-        self._panels[LayoutMode.BallPivotFocused].rendered = -1
+        self._panels[LayoutMode.BallPivotFocused].rendered = -2
         self._make_meshes(require_reset_camera=False)
 
     def _on_radius_changed(self, radius: float) -> None:
+        if np.isclose(self._radius, radius):
+            return
+
         if self._radii_debounce_timer:
             self._radii_debounce_timer.cancel()
 
