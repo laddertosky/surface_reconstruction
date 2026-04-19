@@ -59,6 +59,7 @@ def prepare_delaunay_data(pcd):
         - 'scipy_delaunay'    : the original SciPy Delaunay object
     """
 
+    # 3d Delaunay tetrahedralization
     vertices = np.asarray(pcd.points)
     tri = Delaunay(vertices)
     tetras = tri.simplices
@@ -70,7 +71,7 @@ def prepare_delaunay_data(pcd):
     edges = []
     triangles = []
 
-    # --- Adjacency ---
+    # --- Adjacency containers ---
     tetra_to_faces = []
     tetra_to_edges = []
 
@@ -83,13 +84,14 @@ def prepare_delaunay_data(pcd):
 
     # Process every tetrahedron
     for tid, tet in enumerate(tetras):
+        # Vertices of the tetrahedron
         a, b, c, d = map(int, tet)
 
-        # Record vertex to tetra
+        # Record which tetrahedra touch each vertex
         for v in tet:
             vertex_to_tetras.setdefault(v, set()).add(tid)
             
-        # All 6 edges of a tetra
+        # Generate 6 edges of a tetra
         tet_edges = [
             sort_edge(a, b),
             sort_edge(a, c),
@@ -101,20 +103,24 @@ def prepare_delaunay_data(pcd):
 
         tet_edge_ids = []
         for e in tet_edges:
+            # Add edge to the global edge list if not have seen before
             if e not in edge_to_id:
                 edge_to_id[e] = len(edges)
                 edges.append(e)
 
+            # Record which edge belong to this tetra
             eid = edge_to_id[e]
             tet_edge_ids.append(eid)
 
+            # Record which vertices touch which edges
             i, j = e
             vertex_to_edges.setdefault(i, set()).add(eid)
             vertex_to_edges.setdefault(j, set()).add(eid)
         
+        # Record the 6 edges od this tetra
         tetra_to_edges.append(tet_edge_ids)
 
-        # All 4 triangular faces of tetra
+        # Fenerate 4 triangular faces of tetra
         tet_faces = [
             sort_face(a, b, c),
             sort_face(a, b, d),
@@ -124,23 +130,27 @@ def prepare_delaunay_data(pcd):
 
         tet_face_ids = []
         for f in tet_faces:
+            # Add faces to the global face list
             if f not in face_to_id:
                 face_to_id[f] = len(triangles)
                 triangles.append(f)
 
+            # Record which tetra use each face
             fid = face_to_id[f]
             tet_face_ids.append(fid)
 
             face_to_tetras.setdefault(fid, []).append(tid)
 
+            # Record which vertices touch which faces
             i, j, k = f
             vertex_to_faces.setdefault(i, set()).add(fid)
             vertex_to_faces.setdefault(j, set()).add(fid)
             vertex_to_faces.setdefault(k, set()).add(fid)
         
+        # Record the 4 faces of the tetra
         tetra_to_faces.append(tet_face_ids)
 
-    # Triangle to edges and edge, then to triangles
+    # Build face to edge links
     face_to_edges = []
     for fid, f in enumerate(triangles):
         i, j, k = f
@@ -151,6 +161,7 @@ def prepare_delaunay_data(pcd):
         ]
         face_to_edges.append(f_edges)
 
+        # Record face to edge adjacency
         for eid in f_edges:
             edge_to_faces.setdefault(eid, []).append(fid)
             
@@ -184,13 +195,69 @@ def prepare_delaunay_data(pcd):
             
     return data
 
+def tetra_circumsphere(v4):
+    """
+    """
+
+    a, b, c, d = [np.asarray(v) for v in v4]
+
+    A = np.vstack([
+        b - a,
+        c - a,
+        d - a
+    ])
+
+    detA = np.linalg.det(A)
+    if abs(detA) < 1e-12:
+        return None, np.inf, False
+    
+    rhs = 0.5 * np.array([
+        np.dot(b, b) - np.dot(a, a),
+        np.dot(c, c) - np.dot(a, a),
+        np.dot(d, d) - np.dot(a, a),
+    ])
+
+    try:
+        center = np.linalg.solve(A, rhs)
+    except np.linalg.LinAlgError:
+        return None, np.inf, False
+    
+    radius = np.linalg.norm(center - a)
+
+    return center, radius, True
 
 def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3d.geometry.TriangleMesh:
 
     # Construct Delaunay complex
     data = prepare_delaunay_data(pcd)
 
+    tetras = []
+
+    for tid, tet in enumerate(data['tetras']):
+        v4 = data['vertices'][tet]
+        center, radius, valid = tetra_circumsphere(v4)
+
+        if not valid:
+            continue
+
+        if radius <= alpha:
+            tetras.append(tid)
+
+
+    face_count = {}
+
+    for tid in tetras:
+        for fid in data["tetra_to_faces"][tid]:
+            face_count[fid] = face_count.get(fid, 0) + 1
+
+    boundary_face_ids = [fid for fid, count in face_count.items() if count == 1]
+    boundary_faces = data["triangles"][boundary_face_ids]
+
     mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(boundary_faces)
+    mesh.remove_unreferenced_vertices()
+    mesh.compute_vertex_normals()
 
     return mesh
 
