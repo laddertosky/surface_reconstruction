@@ -7,6 +7,13 @@ https://arxiv.org/abs/math/9410208
 Used for: surface reconstruction / alpha shape algorithm
 """
 
+# Progress update:
+# - Delaunay tetrahedralization + connectivity structure completed.
+# - Added oriented tetra faces for correct rendering.
+# - Added tetra circumsphere computation and single-alpha tetra filtering.
+# - Added initial boundary extraction / visualization.
+# - Next: clean up final surface mesh extraction.
+
 import open3d as o3d
 import numpy as np
 from scipy.spatial import Delaunay 
@@ -19,6 +26,38 @@ def sort_edge(a, b):
 
 def sort_face(a, b, c):
     return tuple(sorted([int(a), int(b), int(c)]))
+
+def oriented_face_from_tetra(v, i, j, k, opp):
+    """
+    Orient triangle (i, j, k) so its normal points away from tetrahedron
+    (i, j, k, opp). If the current winding points toward the opposite vertex opp,
+    flip the triangle.
+
+    Parameters
+    ----------
+    v : (N, 3) array
+        Array of point coordinates.
+    i, j, k : int
+        Vertex indices of the face.
+    opp : int
+        Vertex index opposite the face in the tetrahedron.
+
+    Returns
+    -------
+    tuple of int
+        The face vertex indices in outward-facing order.
+    """
+    pi = v[i]
+    pj = v[j]
+    pk = v[k]
+    po = v[opp]
+
+    normal = np.cross(pj - pi, pk - pi)
+
+    if np.dot(normal, po - pi) > 0:
+        return (i, k, j)
+    
+    return (i, j, k)
 
 def prepare_delaunay_data(pcd):
     """
@@ -73,6 +112,7 @@ def prepare_delaunay_data(pcd):
 
     # --- Adjacency containers ---
     tetra_to_faces = []
+    tetra_to_oriented_faces = []
     tetra_to_edges = []
 
     face_to_tetras = {}
@@ -128,6 +168,13 @@ def prepare_delaunay_data(pcd):
             sort_face(b, c, d),
         ]
 
+        tet_oriented_faces = [
+            oriented_face_from_tetra(vertices, a, b, c, d),
+            oriented_face_from_tetra(vertices, a, b, d, c),
+            oriented_face_from_tetra(vertices, a, c, b, d),
+            oriented_face_from_tetra(vertices, b, c, d, a),
+        ]
+
         tet_face_ids = []
         for f in tet_faces:
             # Add faces to the global face list
@@ -149,6 +196,7 @@ def prepare_delaunay_data(pcd):
         
         # Record the 4 faces of the tetra
         tetra_to_faces.append(tet_face_ids)
+        tetra_to_oriented_faces.append(tet_oriented_faces)
 
     # Build face to edge links
     face_to_edges = []
@@ -179,6 +227,7 @@ def prepare_delaunay_data(pcd):
 
         "tetra_to_edges": tetra_to_edges,
         "tetra_to_faces": tetra_to_faces,
+        "tetra_to_oriented_faces": tetra_to_oriented_faces,
         
         "face_to_edges": face_to_edges,
         "face_to_tetras": dict(face_to_tetras),
@@ -197,6 +246,21 @@ def prepare_delaunay_data(pcd):
 
 def tetra_circumsphere(v4):
     """
+    Compute the circumsphere of a tetrahedron.
+
+    Parameters
+    ----------
+    v4 : array-like of shape (4, 3)
+        The four 3D vertices of the tetrahedron.
+
+    Returns
+    -------
+    center : ndarray of shape (3,) or None
+        Circumsphere center, or None if the tetrahedron is degenerate.
+    radius : float
+        Circumsphere radius, or np.inf if degenerate.
+    valid : bool
+        Whether the circumsphere was computed successfully.
     """
 
     a, b, c, d = [np.asarray(v) for v in v4]
@@ -231,7 +295,8 @@ def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3
     # Construct Delaunay complex
     data = prepare_delaunay_data(pcd)
 
-    tetras = []
+    # Select tetrahedra whose circumsphere radius is <= alpha.
+    selected_tetras_ids = []
 
     for tid, tet in enumerate(data['tetras']):
         v4 = data['vertices'][tet]
@@ -241,25 +306,7 @@ def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3
             continue
 
         if radius <= alpha:
-            tetras.append(tid)
-
-
-    face_count = {}
-
-    for tid in tetras:
-        for fid in data["tetra_to_faces"][tid]:
-            face_count[fid] = face_count.get(fid, 0) + 1
-
-    boundary_face_ids = [fid for fid, count in face_count.items() if count == 1]
-    boundary_faces = data["triangles"][boundary_face_ids]
-
-    mesh = o3d.geometry.TriangleMesh()
-    mesh.vertices = o3d.utility.Vector3dVector(vertices)
-    mesh.triangles = o3d.utility.Vector3iVector(boundary_faces)
-    mesh.remove_unreferenced_vertices()
-    mesh.compute_vertex_normals()
-
-    return mesh
+            selected_tetras_ids.append(tid)
 
 if __name__ == "__main__":
     pcd = BunnyPCD()
