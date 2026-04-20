@@ -166,6 +166,7 @@ class Window:
         self._radii_debounce_timer = None
         self._depth_debounce_delay = 0.3
         self._depth_debounce_timer = None
+        self._threads = {}
 
         self._init_layout()
         self._window.set_on_layout(self._on_layout)
@@ -219,14 +220,18 @@ class Window:
         )
 
     def _make_ball_pivoting_mesh(self) -> o3d.geometry.TriangleMesh:
-        radii = o3d.utility.DoubleVector([self._radius, self._radius * 2, self._radius * 4])
+        radius = self._radius
+        radii = o3d.utility.DoubleVector([radius, radius * 2])
         print(f"Ball Pivoting with radius = {radii}")
-
-        return BallPivotingMethod(
+        mesh = BallPivotingMethod(
             pcd=self._pcd, 
             radii=radii
         )
 
+        # use the previous local value to update slider display value
+        self._ball_radii_slider.double_value = radius
+
+        return mesh
     def _make_meshes(self, require_reset_camera: bool) -> None:
         tasks = {
             LayoutMode.Reference: self._make_reference_mesh,
@@ -237,13 +242,25 @@ class Window:
 
         if self._layout_mode == LayoutMode.All:
             for mode, fn in tasks.items():
+                t = self._threads.get(mode, None)
+                if t and t.is_alive():
+                    continue
+
                 t = threading.Thread(target=self._make_mesh_async, args=(mode, self._asset_index, fn, require_reset_camera), daemon=True)
                 t.start()
+                self._threads[mode] = t
         else:
-            t1 = threading.Thread(target=self._make_mesh_async, args=(self._layout_mode, self._asset_index, tasks[self._layout_mode], require_reset_camera), daemon=True)
-            t1.start()
-            t2 = threading.Thread(target=self._make_mesh_async, args=(LayoutMode.Reference, self._asset_index, tasks[LayoutMode.Reference], require_reset_camera), daemon=True)
-            t2.start()
+            t = self._threads.get(self._layout_mode, None)
+            if not t or not t.is_alive():
+                t = threading.Thread(target=self._make_mesh_async, args=(self._layout_mode, self._asset_index, tasks[self._layout_mode], require_reset_camera), daemon=True)
+                t.start()
+                self._threads[self._layout_mode] = t
+
+            t = self._threads.get(LayoutMode.Reference, None)
+            if not t or not t.is_alive():
+                t = threading.Thread(target=self._make_mesh_async, args=(LayoutMode.Reference, self._asset_index, tasks[LayoutMode.Reference], require_reset_camera), daemon=True)
+                t.start()
+                self._threads[LayoutMode.Reference] = t
 
     def _apply_alpha_change(self) -> None:
         self._panels[LayoutMode.AlphaShapeFocused].rendered = -1
@@ -331,7 +348,7 @@ class Window:
         ball_pivoting_panel = Panel("Ball Pivoting", self._window, 3)
         self._ball_radii_slider = gui.Slider(gui.Slider.Type.DOUBLE)
         self._ball_radii_slider.double_value = self._radius
-        self._ball_radii_slider.set_limits(0.0001, 2)
+        self._ball_radii_slider.set_limits(0.0001, 0.1)
         self._ball_radii_slider.set_on_value_changed(self._on_radius_changed)
         ball_pivoting_panel.control_panel.add_child(gui.Label("radius"))
         ball_pivoting_panel.control_panel.add_child(self._ball_radii_slider)
@@ -361,6 +378,8 @@ class Window:
             self._window.add_child(panel.control_panel)
             self._window.add_child(panel.scene_widget)
             index += 1
+
+            self._threads[mode] = None
 
         reference_top = content_top + content_height
         reference_panel.control_panel.frame = gui.Rect(rect.x, reference_top, rect.width, CTRL_HEIGHT)
