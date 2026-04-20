@@ -29,7 +29,10 @@ from scipy.spatial import KDTree
 from Test import BuiltinSurfaceReconstructionMethod, BunnyPCD, ShowComparison
 
 MAX_POINTS = 20000
-TIME_BUDGET_SEC = 30.0  # give up and return partial mesh after this
+# Defensive wall-clock cap, NOT part of the BPA algorithm in Bernardini 1999 / Digne 2014.
+# Returns whatever mesh is built so far if BPA takes too long on pathological inputs
+# (e.g. highly non-uniform raw mesh vertices). Lets the GUI stay responsive.
+TIME_BUDGET_SEC = 60.0
 
 
 @dataclass
