@@ -20,7 +20,6 @@ from scipy.spatial import Delaunay
 
 from Test import BuiltinSurfaceReconstructionMethod, BunnyPCD, ShowComparison
 
-
 def sort_edge(a, b):
     return tuple(sorted([int(a), int(b)]))
 
@@ -171,7 +170,7 @@ def prepare_delaunay_data(pcd):
         tet_oriented_faces = [
             oriented_face_from_tetra(vertices, a, b, c, d),
             oriented_face_from_tetra(vertices, a, b, d, c),
-            oriented_face_from_tetra(vertices, a, c, b, d),
+            oriented_face_from_tetra(vertices, a, c, d, b),
             oriented_face_from_tetra(vertices, b, c, d, a),
         ]
 
@@ -244,7 +243,7 @@ def prepare_delaunay_data(pcd):
             
     return data
 
-def tetra_circumsphere(v4):
+def tetra_circumsphere(tetra_vs):
     """
     Compute the circumsphere of a tetrahedron.
 
@@ -263,7 +262,7 @@ def tetra_circumsphere(v4):
         Whether the circumsphere was computed successfully.
     """
 
-    a, b, c, d = [np.asarray(v) for v in v4]
+    a, b, c, d = [np.asarray(v) for v in tetra_vs]
 
     A = np.vstack([
         b - a,
@@ -290,23 +289,84 @@ def tetra_circumsphere(v4):
 
     return center, radius, True
 
+def extract_surface(data, selected_tetras_ids):
+    """
+    Extract the boundary triangles of the selected tetrahedra.
+
+    Parameters
+    ----------
+    data : dict
+        Output of prepare_delaunay_data().
+    kept_tetra_ids : iterable of int
+        IDs of tetrahedra that passed the alpha test.
+
+    Returns
+    -------
+    surface : (K, 3) int array
+        Oriented boundary triangles.
+    """
+
+    face_count = {}
+    face_oriented = {}
+
+    for tid in selected_tetras_ids:
+        face_ids = data['tetra_to_faces'][tid]
+        oriented_faces = data['tetra_to_oriented_faces'][tid]
+
+        for i, fid in enumerate(face_ids):
+            face_count[fid] = face_count.get(fid, 0) + 1
+
+            if fid not in face_oriented:
+                face_oriented[fid] = oriented_faces[i]
+        
+    surface = [
+        face_oriented[fid]
+        for fid, count in face_count.items()
+        if count == 1
+    ]
+
+    return surface
+
 def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3d.geometry.TriangleMesh:
 
     # Construct Delaunay complex
     data = prepare_delaunay_data(pcd)
 
+    for tid in range(min(10, len(data["tetras"]))):
+        print(f"\nTetra {tid}: {data['tetras'][tid]}")
+        print("tetra_to_faces IDs:", data["tetra_to_faces"][tid])
+        print("tetra_to_oriented_faces:", data["tetra_to_oriented_faces"][tid])
+
+        for local_idx, fid in enumerate(data["tetra_to_faces"][tid]):
+            canonical = tuple(sorted(data["tetra_to_oriented_faces"][tid][local_idx]))
+            expected = tuple(data["triangles"][fid])
+            print(f"  local {local_idx}: fid={fid}, canonical(oriented)={canonical}, expected={expected}")
+
     # Select tetrahedra whose circumsphere radius is <= alpha.
     selected_tetras_ids = []
 
     for tid, tet in enumerate(data['tetras']):
-        v4 = data['vertices'][tet]
-        center, radius, valid = tetra_circumsphere(v4)
+        tetra_vs = data['vertices'][tet]
+        center, radius, valid = tetra_circumsphere(tetra_vs)
 
         if not valid:
             continue
 
         if radius <= alpha:
             selected_tetras_ids.append(tid)
+
+    surface = extract_surface(data, selected_tetras_ids)
+
+    # Build mesh
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(data['vertices'])
+    mesh.triangles = o3d.utility.Vector3iVector(surface)
+
+    mesh.compute_triangle_normals()
+    mesh.compute_vertex_normals()
+    o3d.visualization.draw_geometries([mesh])
+    
+    return mesh
 
 if __name__ == "__main__":
     pcd = BunnyPCD()
