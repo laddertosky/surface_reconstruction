@@ -154,7 +154,7 @@ class Window:
         self._camera_synced = True
 
         self._asset_index = 0
-        self._vertex_count = 3000
+        self._vertex_count = -1
         self._pcd = ALL_ASSETS[self._asset_index].load_pcd(self._vertex_count)
         self._radius = ALL_ASSETS[self._asset_index].init_radius
         self._poisson_depth = 8
