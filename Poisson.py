@@ -177,6 +177,14 @@ def _compute_divergence(normal_field, voxel_size):
 # equation,  Laplacian(chi) = div(V).
 # This stage recovers a scalar field whose level set will define the surface.
 # In grid form, this means solving a discrete Laplacian system.
+# In ordinary space the Laplacian is a stencil that looks at 6
+# neighbors of every cell, so the problem is a huge sparse linear system.
+# But in Fourier space the Laplacian becomes simple multiplication by a
+# known number (a "frequency squared" factor). 
+# So the algorithm is:
+# 1. FFT the divergence field  ->  d_hat
+# 2. Divide by the frequency factor  ->  chi_hat
+# 3. Inverse FFT  ->  chi
 def _solve_poisson(divergence_field, voxel_size):
     """
     Solve the Poisson equation on the voxel grid.
@@ -186,24 +194,44 @@ def _solve_poisson(divergence_field, voxel_size):
     scalar_field : array with same shape as divergence_field
         Reconstructed scalar field used for surface extraction.
     """
-    # Two possible directions.
-    # Option 1:
-    # Build a sparse 3D Laplacian matrix and solve the linear system.
-    # Option 2:
-    # Use an FFT based method, which is often faster on a regular grid.
+    # use an FFT based method, which is often faster on a regular grid.
     # For the 3D Laplacian stencil, each grid cell is connected to its
     # 6 neighbors, with the center value balancing the sum.
+    grid_size = divergence_field.shape[0]
 
+    # Discrete frequencies along each axis (in radians per unit length)
+    # np.fft.fftfreq returns frequencies in cycles per unit, multiply by 2*pi for radians per unit
+    freqs = np.fft.fftfreq(grid_size, d=voxel_size) * 2.0 * np.pi
+    kx, ky, kz = np.meshgrid(freqs, freqs, freqs, indexing="ij")
 
-    scalar_field = np.zeros_like(divergence_field)
+    # Fourier-space Laplacian is a Multiply by -(kx^2+ ky^2 + kz^2)
+    # In continuous case, Laplacian has Fourier symbol -|k|^2
+    k_squared = kx**2 + ky**2 + kz**2
+
+    # Avoid division by zero at DC component (k=0)
+    # Set chi_hat to 0 at Dc to adjust mean of chi, iso-value in Step 5 handles absolute
+    k_squared[0, 0, 0] = 1.0 #temporary, to avoid nan in divide
+
+    divergence_hat = np.fft.fftn(divergence_field)
+    scalar_hat = -divergence_hat / k_squared  # Laplacian symbol is -k^2
+    scalar_hat[0, 0, 0] = 0.0                 # enforce zero mean
+ 
+    # Inverse FFT; take the real part because numerical noise can leave
+    # tiny imaginary components.
+    scalar_field = np.real(np.fft.ifftn(scalar_hat))
     return scalar_field
 
 
 # =============================================================================
 # Step 5: Extract the mesh with marching cubes
 # =============================================================================
-# Once the scalar field is available, an isosurface can be extracted.
-# Marching cubes converts that level set into a triangle mesh.
+# Once we have 'insideness' at every grid cell, surface is where the insideness
+# crosses the threshold. Marching cubes walks through the grid, stitches together
+# triangles along the boundary
+# choose the iso-level (threshold): every input point p_i is on the true surface, so 
+# chi should evaluate to the same value at every p_i.
+# this can varry a little in code so we sample chi at each input point and take the mean
+# This is based on Section 4.4 in the 2006 Kazhdan paper
 def _extract_isosurface(scalar_field, grid_origin, voxel_size, points):
     """
     Extract a triangle mesh from the reconstructed scalar field.
@@ -213,19 +241,47 @@ def _extract_isosurface(scalar_field, grid_origin, voxel_size, points):
     mesh : o3d.geometry.TriangleMesh
         Output mesh reconstructed from the scalar field.
     """
-    # A common choice is to estimate the isovalue from scalar field values
-    # near the input sample locations.
-    # TODO: sample the scalar field at the input points and compute the mean
-    iso_level = 0.0
-
-    verts, faces, normals_mc, _ = marching_cubes(
+    
+    # Sample chi at each input point using trilinear interpolation.
+    # The iso-level is the mean of those samples.
+    grid_size = scalar_field.shape[0]
+    scaled_points = (points - grid_origin) / voxel_size
+    cell_index = np.floor(scaled_points).astype(np.int64)
+    cell_index = np.clip(cell_index, 0, grid_size - 2)
+    local_offset = scaled_points - cell_index
+ 
+    sampled_values = np.zeros(len(points), dtype=np.float64)
+    for dx in (0, 1):
+        for dy in (0, 1):
+            for dz in (0, 1):
+                wx = local_offset[:, 0] if dx == 1 else (1.0 - local_offset[:, 0])
+                wy = local_offset[:, 1] if dy == 1 else (1.0 - local_offset[:, 1])
+                wz = local_offset[:, 2] if dz == 1 else (1.0 - local_offset[:, 2])
+                weights = wx * wy * wz
+ 
+                ix = cell_index[:, 0] + dx
+                iy = cell_index[:, 1] + dy
+                iz = cell_index[:, 2] + dz
+ 
+                sampled_values += weights * scalar_field[ix, iy, iz]
+ 
+    iso_level = float(sampled_values.mean())
+ 
+    # marching_cubes returns vertices in world units (because we passed
+    # `spacing=voxel_size`). Add grid_origin to shift into absolute world
+    # coordinates.
+    verts, faces, _, _ = marching_cubes(
         scalar_field,
         level=iso_level,
         spacing=(voxel_size, voxel_size, voxel_size),
     )
-
     verts = verts + grid_origin
-
+ 
+    # Kazhdan's chi is higher inside the solid and lower outside. Marching
+    # cubes by default winds triangles so that normals point toward higher
+    # values, i.e. inward for us. Reverse the winding to get outward normals.
+    faces = faces[:, ::-1]
+ 
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(verts)
     mesh.triangles = o3d.utility.Vector3iVector(faces)
@@ -270,6 +326,17 @@ def PoissonMethod(pcd: o3d.geometry.PointCloud, depth: int = 6, **kwargs) -> o3d
 
 
 if __name__ == "__main__":
-    pcd = BunnyPCD()
-    generated_mesh = PoissonMethod(pcd)
-    ShowComparison(pcd, generated_mesh, BuiltinSurfaceReconstructionMethod.POISSON)
+    # Don't use BunnyPCD() — it's hardcoded to 100 points, too sparse.
+    # Sample a denser cloud from the bunny mesh directly.
+    mesh = o3d.io.read_triangle_mesh(o3d.data.BunnyMesh().path)
+    o3d.utility.random.seed(0)
+    pcd = mesh.sample_points_poisson_disk(10000)
+    pcd.estimate_normals()
+    pcd.orient_normals_consistent_tangent_plane(k=10)
+
+    print(f"Point cloud size: {len(pcd.points)}")
+    for depth in (5, 6, 7, 8, 9):
+        print(f"\n--- depth = {depth} ---")
+        generated_mesh = PoissonMethod(pcd, depth=depth)
+        print(f"Output mesh: {len(generated_mesh.vertices)} verts, {len(generated_mesh.triangles)} tris")
+        ShowComparison(pcd, generated_mesh, BuiltinSurfaceReconstructionMethod.POISSON)
