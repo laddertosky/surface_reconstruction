@@ -138,7 +138,7 @@ class Window:
         self._layout_mode = LayoutMode.All
         self._camera_synced = True
 
-        self._asset_index = 4
+        self._asset_index = 3
         self._vertex_count = -1
         self._pcd = ALL_ASSETS[self._asset_index].load_pcd(self._vertex_count)
         self._radius = ALL_ASSETS[self._asset_index].init_radius
@@ -206,7 +206,7 @@ class Window:
 
     def _make_ball_pivoting_mesh(self) -> o3d.geometry.TriangleMesh:
         radius = self._radius
-        radii = o3d.utility.DoubleVector([radius, radius * 2])
+        radii = o3d.utility.DoubleVector([radius, radius * 2, radius * 4])
         print(f"Ball Pivoting with radius = {radii}")
         mesh = BallPivotingMethod(
             pcd=self._pcd, 

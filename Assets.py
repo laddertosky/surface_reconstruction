@@ -52,14 +52,14 @@ class Asset():
 
 # Built-in Ball Pivoting is very slow, it even struggles with beetle.obj
 ALL_ASSETS = [
-    Asset("suzanne", "./assets/suzanne.obj", 590),
-    Asset("beetle", "./assets/beetle.obj", 1254),
-    Asset("cow", "./assets/cow.obj", 2903),
-    Asset("teapot", "./assets/teapot.obj", 3241),
-    Asset("rocker-arm", "./assets/rocker-arm.obj", 10044),
-    Asset("stanford-bunny", o3d.data.BunnyMesh().path, 35947),
-    Asset("lucy", "./assets/lucy.obj", 49987),
-    Asset("dragon", "./assets/xyzrgb_dragon.obj", 124943),
+    Asset("suzanne", "./assets/suzanne.obj", 590), # hand-made 3d model
+    Asset("beetle", "./assets/beetle.obj", 1254), # hand-made 3d model
+    Asset("cow", "./assets/cow.obj", 2903), # hand-made 3d model
+    Asset("teapot", "./assets/teapot.obj", 3241), # hand-made 3d model
+    Asset("rocker-arm", "./assets/rocker-arm.obj", 10044), # generated with scanner
+    Asset("stanford-bunny", o3d.data.BunnyMesh().path, 35947), # generated with scanner
+    Asset("lucy", "./assets/lucy.obj", 49987), # generated with scanner
+    Asset("dragon", "./assets/xyzrgb_dragon.obj", 124943), # generated with scanner
 ]
 
 # for asset in ALL_ASSETS:
