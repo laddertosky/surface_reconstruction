@@ -17,14 +17,9 @@ class Asset():
 
         mesh = self._load()
 
-        # center mesh to (0, 0, 0)
-        self.aabb = mesh.get_axis_aligned_bounding_box()
-        center = self.aabb.get_center()
-        mesh.translate(-center)
-        self.aabb.translate(-center)
-
         self.pcd = o3d.geometry.PointCloud()
         if vertices_count > 0 and vertices_count < self.vertices_count:
+            # should only use when current algorithm implementation is not fast enough
             o3d.utility.random.seed(0)
             self.pcd = mesh.sample_points_poisson_disk(vertices_count)
         else:
@@ -48,6 +43,21 @@ class Asset():
     def _load(self) -> o3d.geometry.TriangleMesh:
         self.mesh = o3d.io.read_triangle_mesh(self.path)
         self.vertices_count = len(self.mesh.vertices)
+
+        # center mesh to (0, 0, 0)
+        self.aabb = self.mesh.get_axis_aligned_bounding_box()
+        center = self.aabb.get_center()
+
+        self.mesh.translate(-center)
+        self.aabb.translate(-center)
+
+        # scale every obj to the same bounding box size
+        max_extent = self.aabb.get_max_extent()
+        scale_factor = 1.0 / max_extent
+        center = self.aabb.get_center()
+        self.mesh.scale(scale_factor, center)
+        self.aabb.scale(scale_factor, center)
+
         return self.mesh
 
 # Built-in Ball Pivoting is very slow, it even struggles with beetle.obj
