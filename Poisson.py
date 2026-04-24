@@ -1,3 +1,12 @@
+"""
+Poisson Surface Reconstruction
+Based on:
+    Kazhdan, M., Bolitho, M., & Hoppe, H. (2006).
+    "Poisson Surface Reconstruction."
+    Eurographics Symposium on Geometry Processing.
+    https://hhoppe.com/poissonrecon.pdf
+"""
+
 import numpy as np
 import open3d as o3d
 from skimage.measure import marching_cubes
@@ -7,10 +16,12 @@ from Test import BuiltinSurfaceReconstructionMethod, BunnyPCD, ShowComparison
 # =============================================================================
 # Step 1: Set up a voxel grid around the input point cloud
 # =============================================================================
+# Chop space into a 3D grid of little cubes.
+# Grid is a bit bigger than the object with extra space so the surface never touches the grid boundary.
+
 # The original Poisson method is described with an adaptive octree.
 # For this version, a regular voxel grid is used to build and test the
-# main reconstruction pipeline. The grid is placed over the full bounding
-# box of the point cloud with a small amount of extra space around it.
+# main reconstruction pipeline. 
 def _build_grid(points: np.ndarray, depth: int = 6, padding: float = 0.1):
     """
     Build a regular 3D voxel grid that covers the point cloud.
@@ -31,7 +42,9 @@ def _build_grid(points: np.ndarray, depth: int = 6, padding: float = 0.1):
     grid_origin : (3,) array
         Minimum corner of the grid in world coordinates.
     voxel_size : float
-        Side length of one voxel.
+        Side length of one voxel (cube) in world units.
+        a voxel_size of 0.5 would mean the grid_corner (2,0,0) sits at
+        world position (1,0,0).
     """
     grid_size = 2 ** depth
 
@@ -49,12 +62,21 @@ def _build_grid(points: np.ndarray, depth: int = 6, padding: float = 0.1):
 # =============================================================================
 # Step 2: Accumulate point normals onto the grid
 # =============================================================================
+# Every normal is floating at a random point, grid wants to have them at grid corners.
+# For each arrow, find 8 corners of the little cube that it is inside, 
+# and split 'vote' among the 8 corners based on how close it is to each one.
+# Point in the middle gives each corner 1/8 of the vote, 
+# Point closer to one corner gives that corner almost everything. 
+
 # Each input point contributes its normal to nearby grid nodes.
 # The full paper uses a smoother basis function, 
-# For now, use trilinear splatting is a practical approximation.
+# We use trilinear splatting, as a simpler smooth kernel
 def _splat_normals(points, normals, grid_size, grid_origin, voxel_size):
     """
-    Spread point normals onto the voxel grid to form a vector field.
+    Spread point normals onto the voxel grid to form a vector field V. 
+    
+    Each input normal is distributed over the 8 grid corners of the cell
+    that contains the point, using trilinear weights.
 
     Returns
     -------
@@ -62,18 +84,59 @@ def _splat_normals(points, normals, grid_size, grid_origin, voxel_size):
         Grid based vector field built from the input normals.
     """
     normal_field = np.zeros((grid_size, grid_size, grid_size, 3), dtype=np.float64)
-    # TODO:
-    # Convert each point into fractional grid coordinates.
-    # Use the surrounding 8 grid corners and distribute the normal
-    # with trilinear weights.
-    #
-    # scaled_points = (points - grid_origin) / voxel_size
-    # cell_index = floor(scaled_points)
-    # local_offset = scaled_points - cell_index
-    #
-    # For each corner offset (dx, dy, dz) in {0, 1}:
-    #   compute the trilinear weight
-    #   add weight * normal to the matching grid node
+    
+    # convert each point into fractional grid coordinates.
+    # For our example point p = (1.3, 2.8, 0.1) with origin (0,0,0):
+    # scaled = ((1.3, 2.8, 0.1) - (0, 0, 0)) / 0.5 = (2.6, 5.6, 0.2)
+    # meaning the point is 2.6 grid cells over in x, 5.6 grid cells up in y, 0.2 grid cells deep in z.
+    scaled_points = (points - grid_origin) / voxel_size #(N, 3)
+
+    # Integer part is index of 'low' corner of the containing cell,
+    # says which grid cell contains the point.
+    # cell_index[0] is a cell that contains point 0, cell_index[1] contains point 1...
+    # we find the cell for every point in the point cloud
+    # cell_index stores the 'low corner' of the cell containing the point.
+    cell_index = np.floor(scaled_points).astype(np.int64) #(N,3)
+
+    # Fractional part is the local offset within the cell
+    # says where inside the grid cell the point is.
+    # local_offset[i] = 0 --> point sits on low corner along the axis
+    # local_offset[i] = 1 --> point sits on high corner
+    local_offset = scaled_points - cell_index #(N,3)
+
+    # clip so cell_index+1 never exceeds grid_size-1
+    # (padding in step 1 already should prevent this)
+    cell_index = np.clip(cell_index, 0, grid_size - 2)
+
+    # for each of 8 corners (dx, dy, dz) in {0,1}^3, accumulate 
+    # the trilinear-weighted normal at the corner.
+    # (basically for the corners ranging from (0,0,0), (1,0,0),...,(1,1,1))
+    for dx in (0,1):
+        for dy in (0,1):
+            for dz in (0,1):
+                # trilinear weight for this corner
+                # if dx=0, weight = (1-local_offset_x). if dx=1, want weight = local_offset_x
+                
+                # low x corner ---------------- high x corner
+                #         point is here (local_offset_x = 0.2)
+                #         0.2 from low, 0.8 from high,
+                # weight for low x side  = 1 - 0.2 = 0.8
+                # weight for high x side = 0.2
+                
+                # example: if a point has local offset: [0.2,, 0.7, 0.4]
+                # for the corner (0,1,0) --> weight is: (1-0.2) * (0.7) * (1-0.4)
+                # for the corner (1,1,0) --> weight is (0.2) * (0.7) * (1-0.4)
+                wx = local_offset[:,0] if dx == 1 else (1.0 - local_offset[:,0])
+                wy = local_offset[:,1] if dy == 1 else (1.0 - local_offset[:,1])
+                wz = local_offset[:,2] if dz == 1 else (1.0 - local_offset[:,2])
+                weights = (wx * wy * wz)[:, None] #(N,1), it broadcasts over 3 normal components
+
+                ix = cell_index[:,0] + dx
+                iy = cell_index[:,1] + dy
+                iz = cell_index[:,2] + dz
+
+                # np.add.at handles repeated indices
+                np.add.at(normal_field, (ix, iy, iz), weights * normals)
 
     return normal_field
 
@@ -81,6 +144,10 @@ def _splat_normals(points, normals, grid_size, grid_origin, voxel_size):
 # =============================================================================
 # Step 3: Compute the divergence of the vector field
 # =============================================================================
+# At each grid cell, look at arrows nearby, and where they point
+# point away: positive divergence. point toward: negative. canecl out: zero
+# This gives a single number per cell (right hand side of the poisson equation)
+# Mathematically: div V = dVx/dx + dVy/dy + dVz/dz.
 # The divergence field becomes the right hand side of the Poisson solve.
 # For now, finite differences on the voxel grid.
 def _compute_divergence(normal_field, voxel_size):
@@ -92,23 +159,22 @@ def _compute_divergence(normal_field, voxel_size):
     divergence_field : (grid_size, grid_size, grid_size) array
         Scalar field used as input to the Poisson equation.
     """
-    # TODO:
-    # Approximate the partial derivatives of each vector component.
-    # One option is np.gradient.
-    # Another option is to compute central differences directly.
-    # dFx_dx = (F[i+1,j,k,0] - F[i-1,j,k,0]) / (2 * voxel_size)
-    # dFy_dy = (F[i,j+1,k,1] - F[i,j-1,k,1]) / (2 * voxel_size)
-    # dFz_dz = (F[i,j,k+1,2] - F[i,j,k-1,2]) / (2 * voxel_size)
-    #
-    # divergence_field = dFx_dx + dFy_dy + dFz_dz
-
-    divergence_field = np.zeros(normal_field.shape[:3], dtype=np.float64)
+    # np.gradient takes the derivative along a given axis with spacing = voxel_size.
+    # We take dVx/dx, dVy/dy, dVz/dz and sum.
+    dVx_dx = np.gradient(normal_field[..., 0], voxel_size, axis=0)
+    dVy_dy = np.gradient(normal_field[..., 1], voxel_size, axis=1)
+    dVz_dz = np.gradient(normal_field[..., 2], voxel_size, axis=2)
+    
+    divergence_field = dVx_dx + dVy_dy + dVz_dz
     return divergence_field
 
 
 # =============================================================================
 # Step 4: Solve the Poisson equation on the grid
 # =============================================================================
+# We have "how insideness is changing" at every cell (divergence),
+# and we want the actual insideness values. This is the Poisson
+# equation,  Laplacian(chi) = div(V).
 # This stage recovers a scalar field whose level set will define the surface.
 # In grid form, this means solving a discrete Laplacian system.
 def _solve_poisson(divergence_field, voxel_size):
@@ -120,7 +186,6 @@ def _solve_poisson(divergence_field, voxel_size):
     scalar_field : array with same shape as divergence_field
         Reconstructed scalar field used for surface extraction.
     """
-    # TODO:
     # Two possible directions.
     # Option 1:
     # Build a sparse 3D Laplacian matrix and solve the linear system.
@@ -128,6 +193,7 @@ def _solve_poisson(divergence_field, voxel_size):
     # Use an FFT based method, which is often faster on a regular grid.
     # For the 3D Laplacian stencil, each grid cell is connected to its
     # 6 neighbors, with the center value balancing the sum.
+
 
     scalar_field = np.zeros_like(divergence_field)
     return scalar_field
