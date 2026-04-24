@@ -35,17 +35,14 @@ class LayoutMode(Enum):
 @dataclass
 class CameraState:
     position: np.ndarray
-    forward: np.ndarray
     up: np.ndarray
 
     def __post_init__(self):
-        self.forward = self.forward / np.linalg.norm(self.forward)
         self.up  = self.up  / np.linalg.norm(self.up)
 
     def copy(self):
         return CameraState(
             position=self.position.copy(),
-            forward=self.forward.copy(),
             up=self.up.copy(),
         )
 
@@ -65,7 +62,7 @@ class Panel:
         button.set_on_clicked(self._on_reset)
         self.control_panel.add_child(button)
 
-        self._center = [0, 0, 0]
+        self._center = np.zeros(3)
         self._extent = 2.5
 
         self._material = rendering.MaterialRecord()
@@ -73,7 +70,7 @@ class Panel:
         self._material.shader = "defaultLit"
 
         self.rendered = -1
-        self.last_camera_state = CameraState(np.zeros(3), np.array([0, 0, 1]), np.array([0, 1, 0]))
+        self.last_camera_state = CameraState(position=self._center, up=np.array([0, 1, 0]))
 
     # should run in the UI thread, so don't put any heavy computing task here
     def add_mesh(self, mesh: o3d.geometry.TriangleMesh, aabb: o3d.geometry.AxisAlignedBoundingBox) -> None:
@@ -94,39 +91,28 @@ class Panel:
     def get_camera_state(self) -> CameraState:
         camera = self.scene_widget.scene.camera
 
-        view_matrix = np.array(camera.get_view_matrix())  # shape (4, 4)
-        if np.any(np.isnan(view_matrix)):
+        model_matrix = np.array(camera.get_model_matrix())  # shape (4, 4)
+        if np.any(np.isnan(model_matrix)):
             return self.last_camera_state
 
-        R = view_matrix[:3, :3]
-
-        translation = view_matrix[:3, 3]
-        position = -R.T @ translation
-
-        # sometimes it will explode
-        if np.any(~np.isfinite(position)) or np.linalg.norm(position) > 1e6:
-            return self.last_camera_state
-
-        forward = -R[2]
-        up = R[1]
-        return CameraState(position, forward, up)
+        position = model_matrix[:3, 3]
+        up = model_matrix[:3, 1]
+        return CameraState(position, up)
 
     def sync_camera(self, other_panel: Self) -> None:
         other_camera_state = other_panel.get_camera_state()
         self.last_camera_state = other_camera_state.copy()
 
         position = other_camera_state.position
-        forward = other_camera_state.forward
         up = other_camera_state.up
 
-        self.scene_widget.scene.camera.look_at(position+forward, position, up)
+        self.scene_widget.scene.camera.look_at(self._center, position, up)
 
     def _on_reset(self) -> None:
         camera = self.scene_widget.scene.camera
-        forward = np.array([0, 0, -1.0])
-        position = self._center + np.array([0, 0, 1.2 * self._extent])
+        position = self._center + np.array([0, 0, 1.2 * self._extent]) # prevent the object hit near plane during rotation
         up = np.array([0, 1, 0])
-        new_camera_state = CameraState(position, forward, up)
+        new_camera_state = CameraState(position, up)
 
         camera.look_at(
             self._center, 
@@ -134,11 +120,10 @@ class Panel:
             new_camera_state.up
         )
 
-        fov = 60
         rect = self.scene_widget.frame
         aspect = rect.width / rect.height
         camera.set_projection(
-            fov,
+            60, # fov
             aspect,
             0.1, # near
             10000, # far
@@ -153,8 +138,8 @@ class Window:
         self._layout_mode = LayoutMode.All
         self._camera_synced = True
 
-        self._asset_index = 0
-        self._vertex_count = 3000
+        self._asset_index = 3
+        self._vertex_count = -1
         self._pcd = ALL_ASSETS[self._asset_index].load_pcd(self._vertex_count)
         self._radius = ALL_ASSETS[self._asset_index].init_radius
         self._poisson_depth = 8
@@ -221,7 +206,7 @@ class Window:
 
     def _make_ball_pivoting_mesh(self) -> o3d.geometry.TriangleMesh:
         radius = self._radius
-        radii = o3d.utility.DoubleVector([radius, radius * 2])
+        radii = o3d.utility.DoubleVector([radius, radius * 2, radius * 4])
         print(f"Ball Pivoting with radius = {radii}")
         mesh = BallPivotingMethod(
             pcd=self._pcd, 
@@ -232,6 +217,7 @@ class Window:
         self._ball_radii_slider.double_value = radius
 
         return mesh
+
     def _make_meshes(self, require_reset_camera: bool) -> None:
         tasks = {
             LayoutMode.Reference: self._make_reference_mesh,
@@ -428,10 +414,7 @@ class Window:
             return False
 
         def cameras_equal(previous_state: CameraState, current_state: CameraState, tol: float = 1e-3) -> bool:
-            return (
-                np.allclose(previous_state.position, current_state.position, atol=tol) and 
-                np.allclose(previous_state.forward, current_state.forward, atol=tol)
-            )
+            return np.allclose(previous_state.position, current_state.position, atol=tol)
 
         for mode, panel in self._panels.items():
             current_camara_state = panel.get_camera_state()

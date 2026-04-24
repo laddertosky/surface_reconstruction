@@ -17,14 +17,9 @@ class Asset():
 
         mesh = self._load()
 
-        # center mesh to (0, 0, 0)
-        self.aabb = mesh.get_axis_aligned_bounding_box()
-        center = self.aabb.get_center()
-        mesh.translate(-center)
-        self.aabb.translate(-center)
-
         self.pcd = o3d.geometry.PointCloud()
         if vertices_count > 0 and vertices_count < self.vertices_count:
+            # should only use when current algorithm implementation is not fast enough
             o3d.utility.random.seed(0)
             self.pcd = mesh.sample_points_poisson_disk(vertices_count)
         else:
@@ -48,18 +43,33 @@ class Asset():
     def _load(self) -> o3d.geometry.TriangleMesh:
         self.mesh = o3d.io.read_triangle_mesh(self.path)
         self.vertices_count = len(self.mesh.vertices)
+
+        # center mesh to (0, 0, 0)
+        self.aabb = self.mesh.get_axis_aligned_bounding_box()
+        center = self.aabb.get_center()
+
+        self.mesh.translate(-center)
+        self.aabb.translate(-center)
+
+        # scale every obj to the same bounding box size
+        max_extent = self.aabb.get_max_extent()
+        scale_factor = 1.0 / max_extent
+        center = self.aabb.get_center()
+        self.mesh.scale(scale_factor, center)
+        self.aabb.scale(scale_factor, center)
+
         return self.mesh
 
 # Built-in Ball Pivoting is very slow, it even struggles with beetle.obj
 ALL_ASSETS = [
-    Asset("suzanne", "./assets/suzanne.obj", 590),
-    Asset("beetle", "./assets/beetle.obj", 1254),
-    Asset("cow", "./assets/cow.obj", 2903),
-    Asset("teapot", "./assets/teapot.obj", 3241),
-    Asset("rocker-arm", "./assets/rocker-arm.obj", 10044),
-    Asset("stanford-bunny", o3d.data.BunnyMesh().path, 35947),
-    Asset("lucy", "./assets/lucy.obj", 49987),
-    Asset("dragon", "./assets/xyzrgb_dragon.obj", 124943),
+    Asset("suzanne", "./assets/suzanne.obj", 590), # hand-made 3d model
+    Asset("beetle", "./assets/beetle.obj", 1254), # hand-made 3d model
+    Asset("cow", "./assets/cow.obj", 2903), # hand-made 3d model
+    Asset("teapot", "./assets/teapot.obj", 3241), # hand-made 3d model
+    Asset("rocker-arm", "./assets/rocker-arm.obj", 10044), # generated with scanner
+    Asset("stanford-bunny", o3d.data.BunnyMesh().path, 35947), # generated with scanner
+    Asset("lucy", "./assets/lucy.obj", 49987), # generated with scanner
+    Asset("dragon", "./assets/xyzrgb_dragon.obj", 124943), # generated with scanner
 ]
 
 # for asset in ALL_ASSETS:
