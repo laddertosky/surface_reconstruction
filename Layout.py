@@ -11,10 +11,9 @@ import open3d.visualization.rendering as rendering  # type: ignore # Open3d does
 from Assets import ALL_ASSETS
 from BallPivoting import BallPivotingMethod
 # TODO: replace the implementations after other team member finish their work
-from Fake import AlphaShapeMethod, PoissonMethod
-
+from Fake import AlphaShapeMethod
 # from AlphaShape import AlphaShapeMethod
-# from Poisson import PoissonMethod
+from Poisson import PoissonMethod
 
 TOP_BAR_HEIGHT = 40
 CTRL_HEIGHT    = 40
@@ -24,6 +23,7 @@ COLOR2 = [0.4, 0.6, 0.4, 1.0]
 COLOR3 = [0.6, 0.4, 0.6, 1.0]
 COLOR4 = [0.3, 0.3, 0.3, 1.0]
 COLORS = [COLOR1, COLOR2, COLOR3, COLOR4]
+FOV = 60
 
 class LayoutMode(Enum):
     All = auto()
@@ -100,15 +100,22 @@ class Panel:
         return CameraState(position, up)
 
     def sync_camera(self, other_panel: Self) -> None:
+        other_aabb = other_panel.scene_widget.scene.bounding_box
         other_camera_state = other_panel.get_camera_state()
         self.last_camera_state = other_camera_state.copy()
 
         position = other_camera_state.position
         up = other_camera_state.up
 
+        # reset rotation pivot even after right mouse drag
+        self.scene_widget.setup_camera(FOV, other_aabb, self._center)
         self.scene_widget.scene.camera.look_at(self._center, position, up)
 
     def _on_reset(self) -> None:
+        aabb = self.scene_widget.scene.bounding_box
+        # reset rotation pivot even after right mouse drag
+        self.scene_widget.setup_camera(FOV, aabb, self._center) 
+
         camera = self.scene_widget.scene.camera
         position = self._center + np.array([0, 0, 1.2 * self._extent]) # prevent the object hit near plane during rotation
         up = np.array([0, 1, 0])
@@ -123,7 +130,7 @@ class Panel:
         rect = self.scene_widget.frame
         aspect = rect.width / rect.height
         camera.set_projection(
-            60, # fov
+            FOV,
             aspect,
             0.1, # near
             10000, # far
