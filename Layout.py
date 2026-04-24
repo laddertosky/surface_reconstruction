@@ -194,15 +194,11 @@ class Window:
     def _make_possion_mesh(self) -> o3d.geometry.TriangleMesh:
         print(f"Poisson with depth = {self._poisson_depth}")
 
-        mesh = PoissonMethod(
+        return PoissonMethod(
             pcd=self._pcd, 
             depth=self._poisson_depth,
         )
 
-        # sometimes artifact will be too large, cropping to prevent it covering the window
-        aabb = ALL_ASSETS[self._asset_index].aabb
-        mesh = mesh.crop(aabb)
-        return mesh
 
     def _make_alpha_shape_mesh(self) -> o3d.geometry.TriangleMesh:
         print(f"Alpha Shape with alpha = {self._alpha:>.3f}")
