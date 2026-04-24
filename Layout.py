@@ -142,7 +142,7 @@ class Window:
         self._vertex_count = -1
         self._pcd = ALL_ASSETS[self._asset_index].load_pcd(self._vertex_count)
         self._radius = ALL_ASSETS[self._asset_index].init_radius
-        self._poisson_depth = 8
+        self._poisson_depth = 6
 
         self._alpha = ALL_ASSETS[self._asset_index].init_alpha
         self._alpha_debounce_delay = 0.1
@@ -318,7 +318,7 @@ class Window:
         possion_panel = Panel("Possion", self._window, 1)
         self._poisson_depth_slider = gui.Slider(gui.Slider.Type.INT)
         self._poisson_depth_slider.int_value = self._poisson_depth
-        self._poisson_depth_slider.set_limits(2, 12)
+        self._poisson_depth_slider.set_limits(2, 9)
         self._poisson_depth_slider.set_on_value_changed(self._on_depth_changed)
         possion_panel.control_panel.add_child(gui.Label("depth"))
         possion_panel.control_panel.add_child(self._poisson_depth_slider)
