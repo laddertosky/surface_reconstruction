@@ -7,12 +7,6 @@ https://arxiv.org/abs/math/9410208
 Used for: surface reconstruction / alpha shape algorithm
 """
 
-# Progress update:
-# - Delaunay tetrahedralization + connectivity structure completed.
-# - Added oriented tetra faces for correct rendering.
-# - Added tetra circumsphere computation and single-alpha tetra filtering.
-# - Added initial boundary extraction / visualization.
-# - Next: clean up final surface mesh extraction.
 
 import open3d as o3d
 import numpy as np
@@ -360,30 +354,6 @@ def is_empty_alpha_sphere(kdtree, center, alpha, face_vertex_ids):
 
     return all(i in face_set for i in indices)
     
-def is_alpha_exposed(tri_v, tri_v_ids, v, alpha):
-    """
-    Return if Delaunay triangle is alpha-exposed for this alpha
-    """
-
-    centers, r_face, valid = alpha_sphere_centers(tri_v, alpha)
-
-    info = {
-        "face_radius": r_face,
-        "centers": [],
-        "empty_sides": [],
-    }
-
-    if not valid:
-        return False, info
-    
-    for c in centers:
-        empty = is_empty_alpha_sphere(c, alpha, v, tri_v_ids)
-        info['empty_sides'].append(empty)
-
-    info['centers'] = centers
-
-    return any(info['empty_sides']), info
-
 def is_regular_alpha_face(tri_v, tri_v_ids, v, alpha):
     """
     True only if exactly one side is empty (regular boundary face).
@@ -449,34 +419,33 @@ def extract_surface(data, face_ids, alpha):
         Oriented boundary triangles.
     """
 
-    vertices = data['vertices']
+    vertices = data["vertices"]
     surface = []
 
     for fid in face_ids:
-        tetras = data['face_to_tetras'][fid]
+        incident_tetras = data["face_to_tetras"][fid]
 
-        int_tid = None
-        for tid in tetras:
-            tet_v = vertices[data['tetras'][tid]]
+        chosen_tid = None
+        for tid in incident_tetras:
+            tet_v = vertices[data["tetras"][tid]]
             _, r, valid = tetra_circumsphere(tet_v)
-
             if valid and r < alpha:
-                int_tid = tid
+                chosen_tid = tid
                 break
 
-        if int_tid is None:
-            tid = tetras[0]
+        if chosen_tid is None:
+            chosen_tid = incident_tetras[0]
 
-        ids = data['tetra_to_faces'][int_tid]
-        i = ids.index(fid)
+        local_face_ids = data["tetra_to_faces"][chosen_tid]
+        local_idx = local_face_ids.index(fid)
 
-        oriented_faces = data['tetra_to_oriented_faces'][tid][i]
-        surface.append(oriented_faces)
+        oriented_face = data["tetra_to_oriented_faces"][chosen_tid][local_idx]
+        surface.append(oriented_face)
 
     if len(surface) == 0:
-        return np.empty((0,3), dtype=int)
-    
-    return np.array(surface, dtype=int)
+        return np.empty((0, 3), dtype=int)
+
+    return np.asarray(surface, dtype=int)
 
 def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3d.geometry.TriangleMesh:
 
@@ -506,8 +475,10 @@ def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3
 
 if __name__ == "__main__":
     pcd = BunnyPCD()
-    generated_mesh = AlphaShapeMethod(pcd, alpha=0.5)
+    generated_mesh = AlphaShapeMethod(pcd, alpha=0.1)
 
+    ref_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, 0.1)
+    o3d.visualization.draw_geometries([ref_mesh])
     o3d.visualization.draw_geometries([generated_mesh])
 
     ShowComparison(pcd, generated_mesh, BuiltinSurfaceReconstructionMethod.ALPHA_SHAPE, alpha=0.5)
