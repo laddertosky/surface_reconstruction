@@ -17,6 +17,7 @@ Used for: surface reconstruction / alpha shape algorithm
 import open3d as o3d
 import numpy as np
 from scipy.spatial import Delaunay 
+from scipy.spatial import cKDTree
 
 from Test import BuiltinSurfaceReconstructionMethod, BunnyPCD, ShowComparison
 
@@ -249,7 +250,7 @@ def tetra_circumsphere(tetra_vs):
 
     Parameters
     ----------
-    v4 : array-like of shape (4, 3)
+    tetra_vs : array-like of shape (4, 3)
         The four 3D vertices of the tetrahedron.
 
     Returns
@@ -289,7 +290,149 @@ def tetra_circumsphere(tetra_vs):
 
     return center, radius, True
 
-def extract_surface(data, selected_tetras_ids):
+def triangle_circumsphere_radius(tri_v):
+    """
+    Compute triangles cirmcumsphere, circumradius, and unit normal of a 3D triangle.
+
+    Parameters
+    ----------
+    tri_v: (3, 3) array
+
+    Returns
+    -------
+    center : (3,) ndarray or None
+    radius : float
+    normal : (3,) ndarray or None
+    valid : bool
+    """
+
+    a, b, c = [np.asarray(v) for v in tri_v]
+
+    ab = b - a
+    ac = c - a
+    
+    cross = np.cross(b - a, c - a)
+    norm_cross = np.linalg.norm(cross)
+
+    if norm_cross < 1e-12:
+        return None, np.inf, None, False
+    
+    normal = cross / norm_cross
+
+    a_b = np.dot(ab, ab)
+    a_c = np.dot(ac, ac)
+
+    center = a + (np.cross(cross, ab) * a_c + np.cross(ac, cross) * a_b) / (2.0 * norm_cross**2)
+
+    radius = np.linalg.norm(center - a)
+
+    return center, radius, normal, True
+
+def alpha_sphere_centers(tri_v, alpha):
+    """
+    Return the candidates centers of radius-alpha spheres through the triangles
+    """
+
+    center, r_face, normal, valid = triangle_circumsphere_radius(tri_v)
+
+    if not valid or alpha + 1e-12 < r_face:
+        return [], r_face, False
+    
+    delta = max(alpha**2 - r_face**2, 0.0)
+    h = np.sqrt(delta)
+
+    if h < 1e-12:
+        return [center], r_face, True
+    
+    c1 = center + h * normal
+    c2 = center - h * normal
+
+    return [c1, c2], r_face, True
+
+def is_empty_alpha_sphere(kdtree, center, alpha, face_vertex_ids):
+    """
+    Check the sphere centered at `center` with radius `alpha`
+    is empty of all points except the face's own vertices.
+    """
+
+    indices = kdtree.query_ball_point(center, alpha - 1e-12)
+    face_set = set(map(int, face_vertex_ids))
+
+    return all(i in face_set for i in indices)
+    
+def is_alpha_exposed(tri_v, tri_v_ids, v, alpha):
+    """
+    Return if Delaunay triangle is alpha-exposed for this alpha
+    """
+
+    centers, r_face, valid = alpha_sphere_centers(tri_v, alpha)
+
+    info = {
+        "face_radius": r_face,
+        "centers": [],
+        "empty_sides": [],
+    }
+
+    if not valid:
+        return False, info
+    
+    for c in centers:
+        empty = is_empty_alpha_sphere(c, alpha, v, tri_v_ids)
+        info['empty_sides'].append(empty)
+
+    info['centers'] = centers
+
+    return any(info['empty_sides']), info
+
+def is_regular_alpha_face(tri_v, tri_v_ids, v, alpha):
+    """
+    True only if exactly one side is empty (regular boundary face).
+    """
+
+    centers, r_face, valid = alpha_sphere_centers(tri_v, alpha)
+    if not valid:
+        return False, False
+    
+    empty_sides = [is_empty_alpha_sphere(c, alpha, v, tri_v_ids) for c in centers]
+    n_empty = sum(empty_sides)
+
+    is_exposed = n_empty >= 1
+    is_regular = n_empty == 1
+
+    return is_exposed, is_regular
+
+def compute_alpha_exposed(data, alpha):
+    """
+    Test all Delaunay triangles for alpha-exposure
+    """
+
+    vertices = data['vertices']
+    tree = cKDTree(vertices)
+    regular_faces = []
+    singular_faces = []
+
+    for fid, tri in enumerate(data['triangles']):
+        tri_ids = tuple(map(int, tri))
+        tri_v = vertices[list(tri_ids)]
+
+        centers, r_face, valid = alpha_sphere_centers(tri_v, alpha)
+        if not valid:
+            continue
+
+        empty_sides = [
+            is_empty_alpha_sphere(tree, c, alpha, tri_ids)
+            for c in centers
+        ]
+
+        n_empty = sum(empty_sides)
+        if n_empty == 1:
+            regular_faces.append(fid)
+        elif n_empty == 2:
+            singular_faces.append(fid)
+
+    return regular_faces, singular_faces
+
+def extract_surface(data, face_ids, alpha):
     """
     Extract the boundary triangles of the selected tetrahedra.
 
@@ -306,69 +449,65 @@ def extract_surface(data, selected_tetras_ids):
         Oriented boundary triangles.
     """
 
-    face_count = {}
-    face_oriented = {}
+    vertices = data['vertices']
+    surface = []
 
-    for tid in selected_tetras_ids:
-        face_ids = data['tetra_to_faces'][tid]
-        oriented_faces = data['tetra_to_oriented_faces'][tid]
+    for fid in face_ids:
+        tetras = data['face_to_tetras'][fid]
 
-        for i, fid in enumerate(face_ids):
-            face_count[fid] = face_count.get(fid, 0) + 1
+        int_tid = None
+        for tid in tetras:
+            tet_v = vertices[data['tetras'][tid]]
+            _, r, valid = tetra_circumsphere(tet_v)
 
-            if fid not in face_oriented:
-                face_oriented[fid] = oriented_faces[i]
-        
-    surface = [
-        face_oriented[fid]
-        for fid, count in face_count.items()
-        if count == 1
-    ]
+            if valid and r < alpha:
+                int_tid = tid
+                break
 
-    return surface
+        if int_tid is None:
+            tid = tetras[0]
+
+        ids = data['tetra_to_faces'][int_tid]
+        i = ids.index(fid)
+
+        oriented_faces = data['tetra_to_oriented_faces'][tid][i]
+        surface.append(oriented_faces)
+
+    if len(surface) == 0:
+        return np.empty((0,3), dtype=int)
+    
+    return np.array(surface, dtype=int)
 
 def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3d.geometry.TriangleMesh:
 
     # Construct Delaunay complex
     data = prepare_delaunay_data(pcd)
 
-    for tid in range(min(10, len(data["tetras"]))):
-        print(f"\nTetra {tid}: {data['tetras'][tid]}")
-        print("tetra_to_faces IDs:", data["tetra_to_faces"][tid])
-        print("tetra_to_oriented_faces:", data["tetra_to_oriented_faces"][tid])
-
-        for local_idx, fid in enumerate(data["tetra_to_faces"][tid]):
-            canonical = tuple(sorted(data["tetra_to_oriented_faces"][tid][local_idx]))
-            expected = tuple(data["triangles"][fid])
-            print(f"  local {local_idx}: fid={fid}, canonical(oriented)={canonical}, expected={expected}")
-
-    # Select tetrahedra whose circumsphere radius is <= alpha.
-    selected_tetras_ids = []
-
-    for tid, tet in enumerate(data['tetras']):
-        tetra_vs = data['vertices'][tet]
-        center, radius, valid = tetra_circumsphere(tetra_vs)
-
-        if not valid:
-            continue
-
-        if radius <= alpha:
-            selected_tetras_ids.append(tid)
-
-    surface = extract_surface(data, selected_tetras_ids)
+    regular_ids, singular_ids = compute_alpha_exposed(data, alpha)
+    surface = extract_surface(data, regular_ids, alpha)
 
     # Build mesh
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(data['vertices'])
     mesh.triangles = o3d.utility.Vector3iVector(surface)
 
+    mesh.remove_duplicated_vertices()
+    mesh.remove_duplicated_triangles()
+    mesh.remove_degenerate_triangles()
+    mesh.orient_triangles()
+    mesh.remove_non_manifold_edges() 
     mesh.compute_triangle_normals()
     mesh.compute_vertex_normals()
-    o3d.visualization.draw_geometries([mesh])
+
+    print(mesh.is_orientable())
+    print(mesh.is_watertight())
     
     return mesh
 
 if __name__ == "__main__":
     pcd = BunnyPCD()
     generated_mesh = AlphaShapeMethod(pcd, alpha=0.5)
+
+    o3d.visualization.draw_geometries([generated_mesh])
+
     ShowComparison(pcd, generated_mesh, BuiltinSurfaceReconstructionMethod.ALPHA_SHAPE, alpha=0.5)
