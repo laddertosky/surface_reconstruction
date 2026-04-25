@@ -15,9 +15,6 @@ from scipy.spatial import cKDTree
 
 from Test import BuiltinSurfaceReconstructionMethod, BunnyPCD, ShowComparison
 
-def sort_edge(a, b):
-    return tuple(sorted([int(a), int(b)]))
-
 def sort_face(a, b, c):
     return tuple(sorted([int(a), int(b), int(c)]))
 
@@ -58,16 +55,6 @@ def prepare_delaunay_data(pcd):
     Build the 3D Delaunay tetrahedralization and its connectivity structure
     from a point cloud.
 
-    Given a point cloud, this function computes the 3D Delaunay tetrahedralization
-    using SciPy and then constructs a combinatorial structure on top of it:
-    - input vertices and Delaunay tetrahedra
-    - unique edges and triangular faces
-    - adjacency maps between all entities:
-        * tetra  -> faces, edges
-        * face   -> tetras, edges
-        * edge   -> faces
-        * vertex -> tetras, faces, edges
-
     Parameters
     ------------
     pcd: o3d.geometry.PointCloud
@@ -75,84 +62,29 @@ def prepare_delaunay_data(pcd):
     Returns
     ------------
     data: dict
-        - 'vertices'          : (N, 3) float array
-        - 'tetras'            : (M, 4) int array of tetrahedra (vertex indices)
-        - 'tetra_neighbors'   : (M, 4) int array of neighboring tetra indices
-        - 'edges'             : (E, 2) int array of unique edges (vertex indices)
-        - 'triangles'         : (F, 3) int array of unique triangle faces (vertex indices)
-        - 'tetra_to_edges'    : list of lists of edge IDs per tetra
-        - 'tetra_to_faces'    : list of lists of face IDs per tetra
-        - 'face_to_edges'     : list of lists of edge IDs per face
-        - 'face_to_tetras'    : dict mapping face ID -> list of tetra IDs
-        - 'edge_to_faces'     : dict mapping edge ID -> list of face IDs
-        - 'vertex_to_edges'   : dict mapping vertex ID -> sorted list of edge IDs
-        - 'vertex_to_faces'   : dict mapping vertex ID -> sorted list of face IDs
-        - 'vertex_to_tetras'  : dict mapping vertex ID -> sorted list of tetra IDs
-        - 'vertex_to_simplex' : (N,) int array; for each vertex, one incident tetra index
-        - 'scipy_delaunay'    : the original SciPy Delaunay object
+        - 'vertices'               : (N, 3) float array
+        - 'tetras'                 : (M, 4) int array of tetrahedra (vertex indices)
+        - 'triangles'              : (F, 3) int array of unique triangle faces (vertex indices)
+        - 'tetra_to_faces'         : list of lists of face IDs per tetra
+        - 'tetra_to_oriented_faces': list of lists of oriented face tuples per tetra
+        - 'face_to_tetras'         : dict mapping face ID -> list of tetra IDs
     """
 
     # 3d Delaunay tetrahedralization
     vertices = np.asarray(pcd.points)
     tri = Delaunay(vertices)
     tetras = tri.simplices
-    tetras_neighbors = tri.neighbors
 
-    # --- Global containers ---
-    edge_to_id = {}
-    face_to_id ={}
-    edges = []
+    face_to_id = {}
     triangles = []
-
-    # --- Adjacency containers ---
     tetra_to_faces = []
     tetra_to_oriented_faces = []
-    tetra_to_edges = []
-
     face_to_tetras = {}
-    edge_to_faces = {}
-
-    vertex_to_edges = {}
-    vertex_to_faces = {}
-    vertex_to_tetras = {}
 
     # Process every tetrahedron
     for tid, tet in enumerate(tetras):
         # Vertices of the tetrahedron
         a, b, c, d = map(int, tet)
-
-        # Record which tetrahedra touch each vertex
-        for v in tet:
-            vertex_to_tetras.setdefault(v, set()).add(tid)
-            
-        # Generate 6 edges of a tetra
-        tet_edges = [
-            sort_edge(a, b),
-            sort_edge(a, c),
-            sort_edge(a, d),
-            sort_edge(b, c),
-            sort_edge(b, d),
-            sort_edge(c, d),
-        ]
-
-        tet_edge_ids = []
-        for e in tet_edges:
-            # Add edge to the global edge list if not have seen before
-            if e not in edge_to_id:
-                edge_to_id[e] = len(edges)
-                edges.append(e)
-
-            # Record which edge belong to this tetra
-            eid = edge_to_id[e]
-            tet_edge_ids.append(eid)
-
-            # Record which vertices touch which edges
-            i, j = e
-            vertex_to_edges.setdefault(i, set()).add(eid)
-            vertex_to_edges.setdefault(j, set()).add(eid)
-        
-        # Record the 6 edges od this tetra
-        tetra_to_edges.append(tet_edge_ids)
 
         # Fenerate 4 triangular faces of tetra
         tet_faces = [
@@ -181,59 +113,18 @@ def prepare_delaunay_data(pcd):
             tet_face_ids.append(fid)
 
             face_to_tetras.setdefault(fid, []).append(tid)
-
-            # Record which vertices touch which faces
-            i, j, k = f
-            vertex_to_faces.setdefault(i, set()).add(fid)
-            vertex_to_faces.setdefault(j, set()).add(fid)
-            vertex_to_faces.setdefault(k, set()).add(fid)
         
         # Record the 4 faces of the tetra
         tetra_to_faces.append(tet_face_ids)
         tetra_to_oriented_faces.append(tet_oriented_faces)
 
-    # Build face to edge links
-    face_to_edges = []
-    for fid, f in enumerate(triangles):
-        i, j, k = f
-        f_edges = [
-            edge_to_id[sort_edge(i, j)],
-            edge_to_id[sort_edge(i, k)],
-            edge_to_id[sort_edge(j, k)],
-        ]
-        face_to_edges.append(f_edges)
-
-        # Record face to edge adjacency
-        for eid in f_edges:
-            edge_to_faces.setdefault(eid, []).append(fid)
-            
-    # Convert sets to sorted list
-    vertex_to_edges = {v: sorted(ids) for v, ids in vertex_to_edges.items()}
-    vertex_to_faces = {v: sorted(ids) for v, ids in vertex_to_faces.items()}
-    vertex_to_tetras = {v: sorted(ids) for v, ids in vertex_to_tetras.items()}
-
     data = {
         "vertices": vertices,
-        "tetras": tetras,
-        "tetras_neighbors": tetras_neighbors,
-        "edges": np.array(edges),
         "triangles": np.array(triangles),
-
-        "tetra_to_edges": tetra_to_edges,
+        "tetras": tetras,
+        "face_to_tetras": dict(face_to_tetras),
         "tetra_to_faces": tetra_to_faces,
         "tetra_to_oriented_faces": tetra_to_oriented_faces,
-        
-        "face_to_edges": face_to_edges,
-        "face_to_tetras": dict(face_to_tetras),
-
-        "edge_to_faces": dict(edge_to_faces),
-
-        "vertex_to_edges": vertex_to_edges,
-        "vertex_to_faces": vertex_to_faces,
-        "vertex_to_tetras": vertex_to_tetras,
-
-        "vertex_to_simplex": np.asarray(tri.vertex_to_simplex),
-        "scipy_delaunay": tri,
     }      
             
     return data
@@ -353,23 +244,6 @@ def is_empty_alpha_sphere(kdtree, center, alpha, face_vertex_ids):
     face_set = set(map(int, face_vertex_ids))
 
     return all(i in face_set for i in indices)
-    
-def is_regular_alpha_face(tri_v, tri_v_ids, v, alpha):
-    """
-    True only if exactly one side is empty (regular boundary face).
-    """
-
-    centers, r_face, valid = alpha_sphere_centers(tri_v, alpha)
-    if not valid:
-        return False, False
-    
-    empty_sides = [is_empty_alpha_sphere(c, alpha, v, tri_v_ids) for c in centers]
-    n_empty = sum(empty_sides)
-
-    is_exposed = n_empty >= 1
-    is_regular = n_empty == 1
-
-    return is_exposed, is_regular
 
 def compute_alpha_exposed(data, alpha):
     """
@@ -389,29 +263,38 @@ def compute_alpha_exposed(data, alpha):
         if not valid:
             continue
 
+        n_incident_tetras = len(data['face_to_tetras'][fid])
+
         empty_sides = [
             is_empty_alpha_sphere(tree, c, alpha, tri_ids)
             for c in centers
         ]
 
         n_empty = sum(empty_sides)
-        if n_empty == 1:
-            regular_faces.append(fid)
-        elif n_empty == 2:
-            singular_faces.append(fid)
+
+        if n_incident_tetras == 1:
+            if n_empty >= 1:
+                regular_faces.append(fid)
+        else:
+            if n_empty == 1:
+                regular_faces.append(fid)
+            elif n_empty == 2:
+                singular_faces.append(fid)
 
     return regular_faces, singular_faces
 
 def extract_surface(data, face_ids, alpha):
     """
-    Extract the boundary triangles of the selected tetrahedra.
+    Extract oriented boundary triangles from selected face IDs.
 
     Parameters
     ----------
     data : dict
         Output of prepare_delaunay_data().
-    kept_tetra_ids : iterable of int
-        IDs of tetrahedra that passed the alpha test.
+    face_ids : list of int
+        Face IDs to include in the surface (regular or singular).
+    alpha : float
+        Alpha value used to identify the interior tetrahedron per face.
 
     Returns
     -------
@@ -475,10 +358,5 @@ def AlphaShapeMethod(pcd: o3d.geometry.PointCloud, alpha: float, **kwargs) -> o3
 
 if __name__ == "__main__":
     pcd = BunnyPCD()
-    generated_mesh = AlphaShapeMethod(pcd, alpha=0.1)
-
-    ref_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, 0.1)
-    o3d.visualization.draw_geometries([ref_mesh])
-    o3d.visualization.draw_geometries([generated_mesh])
-
+    generated_mesh = AlphaShapeMethod(pcd, alpha=0.5)
     ShowComparison(pcd, generated_mesh, BuiltinSurfaceReconstructionMethod.ALPHA_SHAPE, alpha=0.5)
