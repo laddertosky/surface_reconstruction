@@ -10,9 +10,9 @@ import open3d.visualization.rendering as rendering  # type: ignore # Open3d does
 
 from Assets import ALL_ASSETS
 # TODO: replace the implementations after other team member finish their work
-from Fake import AlphaShapeMethod, BallPivotingMethod, PoissonMethod
+from Fake import BallPivotingMethod, PoissonMethod
 
-# from AlphaShape import AlphaShapeMethod
+from AlphaShape import AlphaShapeMethod
 # from BallPivoting import BallPivotingMethod
 # from Poisson import PoissonMethod
 
@@ -307,7 +307,7 @@ class Window:
         alpha_shape_panel = Panel("Alpha Shape", self._window, 2)
         self._alpha_slider = gui.Slider(gui.Slider.Type.DOUBLE)
         self._alpha_slider.double_value = np.log10(self._alpha)
-        self._alpha_slider.set_limits(-3, 3)
+        self._alpha_slider.set_limits(-2, 0)
         self._alpha_slider.set_on_value_changed(self._on_alpha_changed)
         alpha_shape_panel.control_panel.add_child(gui.Label("log10(alpha)"))
         alpha_shape_panel.control_panel.add_child(self._alpha_slider)
