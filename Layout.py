@@ -8,11 +8,9 @@ import open3d as o3d
 import open3d.visualization.gui as gui  # type: ignore # Open3d doesn't provide signature for this python binding
 import open3d.visualization.rendering as rendering  # type: ignore # Open3d doesn't provide signature for this python binding
 
+from AlphaShape import AlphaShapeMethod
 from Assets import ALL_ASSETS
 from BallPivoting import BallPivotingMethod
-# TODO: replace the implementations after other team member finish their work
-from Fake import AlphaShapeMethod
-# from AlphaShape import AlphaShapeMethod
 from Poisson import PoissonMethod
 
 TOP_BAR_HEIGHT = 40
@@ -329,7 +327,7 @@ class Window:
         alpha_shape_panel = Panel("Alpha Shape", self._window, 2)
         self._alpha_slider = gui.Slider(gui.Slider.Type.DOUBLE)
         self._alpha_slider.double_value = np.log10(self._alpha)
-        self._alpha_slider.set_limits(-3, 3)
+        self._alpha_slider.set_limits(-2, 0)
         self._alpha_slider.set_on_value_changed(self._on_alpha_changed)
         alpha_shape_panel.control_panel.add_child(gui.Label("log10(alpha)"))
         alpha_shape_panel.control_panel.add_child(self._alpha_slider)
