@@ -6,6 +6,12 @@ Open3D includes implementations for all these three algorithms in C++, and we ch
 ![Example](example.jpg)
 
 
+## Dependencies
+If you use pip for your package management, run:
+```bash
+pip install -r ./requirements.txt
+```
+
 ## Usage of Visualization Tool
 ```bash
 python3 Main.py
