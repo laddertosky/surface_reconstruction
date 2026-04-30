@@ -1,21 +1,21 @@
-## setup just to test my work in progress portion (Edward)
+## Surface Reconstruction
+This project implements three surface reconstruction algorithms: Alpha Shape, Ball Pivoting, and Poisson, each based on its original paper. The goal is to generate a 3D triangle mesh from an aligned point cloud. A visualization tool is also provided to facilitate visual comparison of the resulting meshes. 
 
-Requires Python 3.11+.
+Open3D includes implementations for all these three algorithms in C++, and we choose to build on Python based on the original papers for learning purposes. Some optimizations implemented in Open3D are dropped due to time constraints. We only use built-in methods in Open3D as a validation for checking the correctness of our implementations.
 
+![Example](example.jpg)
+
+
+## Usage of Visualization Tool
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+python3 Main.py
 ```
 
-You need to activate the venv each time you open a new terminal:
+## Data Source
+[Common 3D test models](github.com/alecjacobson/common-3d-test-models)
 
-```bash
-source venv/bin/activate
-```
-
-## Running individual portion
-
-```bash
-python BallPivoting.py
-```
+## Reference
+- Bernardini, F., Mittleman, J., Rushmeier, H., Silva, C., & Taubin, G. (1999). The ball-pivoting algorithm for surface reconstruction. IEEE Transactions on Visualization and Computer Graphics, 5(4), 349–359. http://mesh.brown.edu/taubin/pdfs/bernardini-etal-tvcg99.pdf
+- Edelsbrunner, H., & Mücke, E. P. (1994). Three-dimensional alpha shapes. ACM Transactions on Graphics, 13(1), 43–72. https://arxiv.org/pdf/math/9410208
+- Kazhdan, M., Bolitho, M., & Hoppe, H. (2006). Poisson surface reconstruction. Eurographics Symposium on Geometry Processing. https://hhoppe.com/poissonrecon.pdf
+- Digne, J. (2014). An analysis and implementation of a parallel ball pivoting algorithm. Image Processing On Line, 4, 149–168. https://www.ipol.im/pub/art/2014/81/article_lr.pdf
