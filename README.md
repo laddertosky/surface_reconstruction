@@ -17,6 +17,20 @@ pip install -r ./requirements.txt
 python3 Main.py
 ```
 
+## Project Structure
+├── AlphaShape.py       Implementation of Alpha Shape algorithm
+├── BallPivoting.py     Implementation of Ball Pivoting algorithm
+├── Poisson.py          Implementation of Poisson algorithm
+│
+├── assets/*.obj        3D test models
+├── Assets.py           Mesh loading and preprocessing
+│
+├── Layout.py           UI layout core pipeline
+├── Main.py             Entry Point
+│
+├── Test.py             Correctness check with Open3D built-in method (Generated with ChatGPT)
+└── Verify.py           Verify if Test.py can differentiate different methods
+
 ## Data Source
 [Common 3D test models](github.com/alecjacobson/common-3d-test-models)
 

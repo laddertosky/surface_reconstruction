@@ -524,7 +524,7 @@ def BallPivotingMethod(
 if __name__ == "__main__":
     mesh_data = o3d.io.read_triangle_mesh(o3d.data.BunnyMesh().path)
     o3d.utility.random.seed(0)
-    pcd = mesh_data.sample_points_poisson_disk(500)
+    pcd = mesh_data.sample_points_poisson_disk(5000)
     pcd.estimate_normals()
     pcd.orient_normals_consistent_tangent_plane(10)
 
